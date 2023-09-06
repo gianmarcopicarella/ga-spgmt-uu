@@ -1,4 +1,4 @@
-$SRC_DIR = "../src"
+$SRC_DIR = "../"
 $BUILD_DIR = "../build"
 $CGAL_CC_PATH = "../dep/vcpkg/scripts/buildsystems/vcpkg.cmake"
 $VCPP_VERSION = '"Visual Studio 17 2022"' # change if needed

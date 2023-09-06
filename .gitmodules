@@ -1,3 +1,6 @@
 [submodule "dep/vcpkg"]
 	path = dep/vcpkg
 	url = https://github.com/microsoft/vcpkg.git
+[submodule "dep/Catch2"]
+	path = dep/Catch2
+	url = https://github.com/catchorg/Catch2.git
