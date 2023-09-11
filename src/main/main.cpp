@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
-
+/*
 #include <CGAL/Cartesian.h>
 #include <CGAL/Exact_rational.h>
 
@@ -17,7 +17,7 @@
 
 #include "../common/DebugUtils.h"
 
-/*
+
 typedef CGAL::Exact_rational ExactReal;
 typedef CGAL::Cartesian<ExactReal> Cartesian;
 typedef Cartesian::Plane_3 Plane;
@@ -26,7 +26,7 @@ typedef Cartesian::Direction_3 Dir3;
 typedef Cartesian::Vector_3 Vec3;
 
 typedef Cartesian::Line_3 Line3;
-*/
+
 
 /*
 04/09/2023
@@ -268,18 +268,103 @@ std::vector<int> ComputeLowerEnvelopeBF(const std::vector<Point3>& somePoints)
 }
 */
 
+#include "../common/Types.h"
+#include "../common/DebugUtils.h"
+#include "../common/BatchPointLocation.h"
+
+SPGMT::Line2 Create2DLine(const SPGMT::Point2& aFirst, const SPGMT::Point2& aSecond)
+{
+	CGAL_precondition(aFirst != aSecond);
+
+	if (aFirst < aSecond)
+	{
+		return SPGMT::Line2{ aFirst, aSecond };
+	}
+	else
+	{
+		return SPGMT::Line2{ aSecond, aFirst };
+	}
+}
 
 int main()
 {
-	const auto points = SPGMT::Debug::Uniform3DCubeSampling(10, 50);
+
+	//auto planes = SPGMT::Debug::RandomPlaneSampling(20);
+
+	/*for (int i = 0; i < 40; ++i)
+	{
+		std::cout << planes[i] << std::endl;
+	}*/
+
+	//std::vector<SPGMT::Point3> points;
+
+	//SPGMT::BatchPointLocation(planes, points);
+
+	/*const auto points = SPGMT::Debug::Uniform3DCubeSampling(10, 50);
 
 	std::cout << points.size() << std::endl;
 
 	SPGMT::Debug::SerializeToPLY("test.ply", points);
 
-	
+
 
 	SPGMT::PointSet3 a = SPGMT::Debug::DeserializeFromPLY<SPGMT::PointSet3>("test.ply");
+	*/
+
+	// In order to have always coherent POSITIVE and NEGATIVE line sides, given two points s and e, 
+	// the line is define by start = min(s, e) and end = max(s, e)
+	using namespace SPGMT;
+
+	/*auto planes = SPGMT::Debug::RandomPlaneSampling(20);
+
+	for (auto p : planes)
+	{
+		auto d = p.orthogonal_direction();
+		auto tp = p.point() + Vec3{ d.dx(), d.dy(), d.dz() } *10;
+		auto tn = p.point() + Vec3{ d.dx(), d.dy(), d.dz() } *-10;
+
+		if (p.has_on_positive_side(Point3{ tp.x(), tp.y(), tp.z() }))
+		{
+			std::cout << "positive" << std::endl;
+		}
+		else if (p.has_on_negative_side(Point3{ tp.x(), tp.y(), tp.z() }))
+		{
+			std::cout << "negative" << std::endl;
+		}
+
+		if (p.has_on_positive_side(Point3{ tn.x(), tn.y(), tn.z() }))
+		{
+			std::cout << "positive" << std::endl;
+		}
+		else if (p.has_on_negative_side(Point3{ tn.x(), tn.y(), tn.z() }))
+		{
+			std::cout << "negative" << std::endl;
+		}
+	}*/
+
+	//SPGMT::Plane p{ SPGMT::Point3{0,0,0}, SPGMT::Vec3{0,1,0} };
+
+	////SPGMT::Line2 t = Create2DLine(SPGMT::Point2{0,0}, SPGMT::Point2{ 2,1 });
+
+	//SPGMT::Point3 test{ 10, 0, 10 };
+
+	//if (p.has_on_positive_side(test))
+	//{
+	//	std::cout << "positive" << std::endl;
+	//}
+	//else if (p.has_on_negative_side(test))
+	//{
+	//	std::cout << "negative" << std::endl;
+	//}
+
+	for (auto p : SPGMT::Debug::RandomPlaneSampling(1000, -500, 500))
+	{
+		const auto& points = SPGMT::Debug::RandomPointsPartitionedByPlane(1000, p);
+
+		std::cout << p << std::endl;
+	}
+
+
 
 	return 0;
 }
