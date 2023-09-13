@@ -8,6 +8,7 @@
 #include <CGAL/Line_3.h>
 #include <CGAL/Line_2.h>
 #include <CGAL/Direction_3.h>
+#include <CGAL/Direction_2.h>
 #include <CGAL/Vector_3.h>
 #include <CGAL/Vector_2.h>
 
@@ -41,4 +42,5 @@ namespace SPGMT
     typedef Kernel::Line_2 Line2;
     typedef Kernel::Point_2 Point2;
     typedef Kernel::Vector_2 Vec2;
+    typedef Kernel::Direction_2 Dir2;
 }

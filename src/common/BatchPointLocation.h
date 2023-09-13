@@ -1,29 +1,48 @@
 #pragma once
 
 #include "Types.h"
+#include <variant>
 
 namespace SPGMT
 {
-	enum class ResultType
+	struct OnePlaneResult
 	{
-		NONE = 0,
-		PARALLEL_PLANES = 1,
-		SINGLE_PLANE = 2
+		// True -> Plane above point, False -> Plane below or point contained in plane
+		std::vector<bool> myIsPointCovered;
 	};
 
-	struct LocationResult
+	struct ParallelPlanesResult
 	{
-		ResultType myType{ ResultType::NONE };
-		std::vector<std::pair<int, int>> myRanges;
+		using Range = std::pair<int, int>;
 		std::vector<int> mySortedPlanesIndices;
+		std::vector<Range> myRanges;
 	};
+
+	struct BaseResult
+	{
+		using Range = std::pair<int, int>;
+		struct ZoneRange
+		{
+			Range myRange;
+			int myZoneIndex;
+			bool myIsFaceZone;
+		};
+
+		std::unordered_map<int, std::vector<int>> mySortedPlanesPerFaceZone;
+		std::unordered_map<int, std::vector<int>> mySortedPlanesPerLineZone;
+		// Each pair contains the zone index to be used to retrieve the sorted planes list
+		// and the range of planes above the point in that list
+		std::vector<ZoneRange> myZoneRangesPairs;
+	};
+
+	using LocationResult = std::variant<std::monostate, OnePlaneResult, ParallelPlanesResult, BaseResult>;
 
 	namespace Debug
 	{
 		template<typename T>
 		bool AreItemsUnique(const std::vector<T>& someItems)
 		{
-			auto areItemsUnique { true };
+			auto areItemsUnique{ true };
 			for (int i = 0; i < someItems.size() && areItemsUnique; ++i)
 			{
 				for (int k = i + 1; k < someItems.size(); ++k)
@@ -39,5 +58,5 @@ namespace SPGMT
 		}
 	}
 
-	void BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints, LocationResult& anOutResult);
+	LocationResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);
 }

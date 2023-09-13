@@ -13,18 +13,15 @@ Currently this function must behave correctly for the following cases:
 
 TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
 {
-    SPGMT::LocationResult result;
-    std::vector<SPGMT::Plane> planes;
-
     SECTION("100 Random Points") 
     {
         constexpr auto sampleCount = 100;
+        std::vector<SPGMT::Plane> planes;
         std::vector<SPGMT::Point3> points = SPGMT::Debug::Uniform3DCubeSampling(100.f, sampleCount);
         
-        SPGMT::BatchPointLocation(planes, points, result);
+        const auto result = SPGMT::BatchPointLocation(planes, points);
 
-        REQUIRE(result.myRanges.size() == 0);
-        REQUIRE(result.myType == SPGMT::ResultType::NONE);
+        REQUIRE(std::holds_alternative<std::monostate>(result));
     }
 }
 
@@ -42,42 +39,52 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
         
         for(auto i = 0; i < planes.size(); ++i)
         {
-            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(pointSamplesCount, planes[i], minPlaneDistance - 1.f);
+            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(pointSamplesCount, planes[i], minPlaneDistance - 1.f, false);
             std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
         }
 
         // run function
-        SPGMT::LocationResult result;
-        SPGMT::BatchPointLocation(planes, points, result);
+        const auto result = SPGMT::BatchPointLocation(planes, points);
 
-        REQUIRE(result.myType == SPGMT::ResultType::PARALLEL_PLANES);
-        REQUIRE(result.myRanges.size() == (planeSamplesCount * pointSamplesCount));
-        REQUIRE(result.mySortedPlanesIndices.size() == planeSamplesCount);
+        REQUIRE(std::holds_alternative<SPGMT::ParallelPlanesResult>(result));
 
-        // Sort planes
-        std::vector<SPGMT::Plane> sortedPlanes;
-        for (auto i = 0; i < planes.size(); ++i)
+        const auto unpackedResult = std::get<SPGMT::ParallelPlanesResult>(result);
+        
+        REQUIRE(unpackedResult.myRanges.size() == (planeSamplesCount * pointSamplesCount));
+        REQUIRE(unpackedResult.mySortedPlanesIndices.size() == planeSamplesCount);
+
+        // Check ranges
+        for (auto i = 0; i < unpackedResult.myRanges.size(); ++i)
         {
-            const auto planeIdx = result.mySortedPlanesIndices[i];
-            sortedPlanes.push_back(planes[planeIdx]);
-        }
+            // This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes" 
+            const int firstPlaneAboveIdx = unpackedResult.myRanges[i].first;
+            const int rangeEnd = unpackedResult.myRanges[i].second;
 
-        // check ranges
-        for (auto i = 0; i < result.myRanges.size(); ++i)
-        {
-            const int startPlaneIdx = result.myRanges[i].first;
-            const int endPlaneIdx = result.myRanges[i].second;
-            if (startPlaneIdx != -1)
+            if (firstPlaneAboveIdx != -1)
             {
-                const auto requirement = (sortedPlanes[startPlaneIdx].has_on_negative_side(points[i]) ||
-                    sortedPlanes[startPlaneIdx].has_on(points[i])) && endPlaneIdx > startPlaneIdx;
+                // Check that all planes before are below the point and all planes in the range are above the point
+                for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
+                {
+                    const int planeIdx = unpackedResult.mySortedPlanesIndices[k];
+                    const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+                    REQUIRE(requirement);
+                }
 
-                REQUIRE(requirement);
+                for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+                {
+                    const int planeIdx = unpackedResult.mySortedPlanesIndices[k];
+                    const auto requirement = planes[planeIdx].has_on_negative_side(points[i]);
+                    REQUIRE(requirement);
+                }
             }
             else
             {
-                const auto requirement = sortedPlanes.back().has_on_positive_side(points[i]) && endPlaneIdx == -1;
-                REQUIRE(requirement);
+                // Check that all planes are below the point (here order doesn't matter)
+                for (int k = 0; k < planes.size(); ++k)
+                {
+                    const auto requirement = planes[k].has_on_positive_side(points[i]);
+                    REQUIRE(requirement);
+                }
             }
         }
     }
@@ -95,25 +102,59 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
             const auto& points = SPGMT::Debug::RandomPointsPartitionedByPlane(pointSamplesCount, plane);
 
             // run function
-            SPGMT::LocationResult result;
-            SPGMT::BatchPointLocation({ plane }, points.mySamples, result);
+            const auto result = SPGMT::BatchPointLocation({ plane }, points.mySamples);
 
-            REQUIRE(result.myType == SPGMT::ResultType::SINGLE_PLANE);
-            REQUIRE(result.myRanges.size() == pointSamplesCount);
+            REQUIRE(std::holds_alternative<SPGMT::OnePlaneResult>(result));
 
-            // compare results
-            auto planeAboveFoundCount { 0 };
+            const auto unpackedResult = std::get<SPGMT::OnePlaneResult>(result);
 
-            for (auto i = 0; i < result.myRanges.size(); ++i)
+            REQUIRE(unpackedResult.myIsPointCovered.size() == pointSamplesCount);
+
+            // Check result
+            for (auto i = 0; i < pointSamplesCount; ++i)
             {
-                const auto range = result.myRanges[i];
-                if (range.first == 0 && range.second == -1)
+                if (unpackedResult.myIsPointCovered[i])
                 {
-                    planeAboveFoundCount += 1;
+                    const auto requirement = plane.has_on_negative_side(points.mySamples[i]);
+                    REQUIRE(requirement);
                 }
             }
-
-            REQUIRE(planeAboveFoundCount == (points.myNegativeCount + points.myOverSurfaceCount));
         }
+    }
+}
+
+TEST_CASE("BatchPointLocation test", "[BatchPointLocation]")
+{
+    SPGMT::LocationResult result;
+    std::vector<SPGMT::Plane> planes;
+
+    SECTION("Test del cazzo")
+    {
+        constexpr auto minPlaneDistance = 20.f;
+        auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(2, minPlaneDistance);
+        {
+            SPGMT::Plane horizontalPlane{ SPGMT::Point3{0,0,0}, SPGMT::Dir3{0,1,0} };
+            planes.push_back(horizontalPlane);
+        }
+
+        constexpr auto pointSamplesCount = 10;
+        constexpr auto allowSamplesOverPlane = false;
+        std::vector<SPGMT::Point3> points;
+
+        for (auto i = 0; i < planes.size(); ++i)
+        {
+            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+                pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+            std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+        }
+
+        // run function
+        const auto result = SPGMT::BatchPointLocation(planes, points);
+
+        REQUIRE(std::holds_alternative<SPGMT::BaseResult>(result));
+
+        const auto unpackedResult = std::get<SPGMT::BaseResult>(result);
+
+        REQUIRE(unpackedResult.myZoneRangesPairs.size() == points.size());
     }
 }
