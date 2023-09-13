@@ -472,6 +472,9 @@ namespace SPGMT
 							HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, Line3{ queryPoint, Vec3{0,1,0} });
 						std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
 						std::transform(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), std::back_inserter(sortedIndices), transform);
+
+						// Store planes in the output
+						resultPayload.mySortedPlanesPerFaceZone.insert(std::make_pair(zoneResult.first, sortedIndices));
 					}
 
 					// Search for the first plane above the query point
@@ -492,6 +495,9 @@ namespace SPGMT
 							HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, Line3{ queryPoint, Vec3{0,1,0} });
 						std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
 						std::transform(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), std::back_inserter(sortedIndices), transform);
+
+						// Store planes in the output
+						resultPayload.mySortedPlanesPerLineZone.insert(std::make_pair(zoneResult.first, sortedIndices));
 
 						// From the sorted list of indices, remove all the planes with same z by 
 						// keeping only the first one encountered in the list

@@ -123,22 +123,24 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
     }
 }
 
-TEST_CASE("BatchPointLocation test", "[BatchPointLocation]")
+TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting plane intersections", "[BatchPointLocation]")
 {
     SPGMT::LocationResult result;
     std::vector<SPGMT::Plane> planes;
 
-    SECTION("Test del cazzo")
+    SECTION("One horizontal plane and some random parallel planes intersecting it")
     {
         constexpr auto minPlaneDistance = 20.f;
-        auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(2, minPlaneDistance);
+        constexpr auto planesCount = 10;
+        constexpr auto pointSamplesCount = 100;
+        constexpr auto allowSamplesOverPlane = false;
+
+        auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
         {
             SPGMT::Plane horizontalPlane{ SPGMT::Point3{0,0,0}, SPGMT::Dir3{0,1,0} };
             planes.push_back(horizontalPlane);
         }
 
-        constexpr auto pointSamplesCount = 10;
-        constexpr auto allowSamplesOverPlane = false;
         std::vector<SPGMT::Point3> points;
 
         for (auto i = 0; i < planes.size(); ++i)
@@ -156,5 +158,46 @@ TEST_CASE("BatchPointLocation test", "[BatchPointLocation]")
         const auto unpackedResult = std::get<SPGMT::BaseResult>(result);
 
         REQUIRE(unpackedResult.myZoneRangesPairs.size() == points.size());
+
+        // Check ranges
+        for (auto i = 0; i < unpackedResult.myZoneRangesPairs.size(); ++i)
+        {
+            const auto& zoneRange = unpackedResult.myZoneRangesPairs[i];
+            const auto& sortedPlanesIndices = zoneRange.myIsFaceZone ? 
+                unpackedResult.mySortedPlanesPerFaceZone.at(zoneRange.myZoneIndex) :
+                unpackedResult.mySortedPlanesPerLineZone.at(zoneRange.myZoneIndex);
+
+            // This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes" 
+            const int firstPlaneAboveIdx = zoneRange.myRange.first;
+            const int rangeEnd = zoneRange.myRange.second;
+
+            if (firstPlaneAboveIdx != -1)
+            {
+                // Check that all planes before are below the point and all planes in the range are above the point
+                for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
+                {
+                    const int planeIdx = sortedPlanesIndices[k];
+                    const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+                    REQUIRE(requirement);
+                }
+
+                for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+                {
+                    const int planeIdx = sortedPlanesIndices[k];
+                    const auto requirement = planes[planeIdx].has_on_negative_side(points[i]);
+                    REQUIRE(requirement);
+                }
+            }
+            else
+            {
+                // Check that all planes are below the point (here order and zone dont matter)
+                for (int k = 0; k < planes.size(); ++k)
+                {
+                    const auto requirement = planes[k].has_on_positive_side(points[i]);
+                    REQUIRE(requirement);
+                }
+            }
+        }
+
     }
 }

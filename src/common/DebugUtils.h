@@ -16,7 +16,7 @@ namespace SPGMT
 
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount);
 		std::vector<Plane> RandomPlaneSampling(const int aSampleCount, const double aMinPlaneHeight = -100.f, const double aMaxPlaneHeight = 100.f);
-		std::vector<Plane> RandomParallelPlanesSampling(const int aSampleCount, const double aMinPlaneDistance = -100.f, const double aMaxPlaneDistance = 100.f);
+		std::vector<Plane> RandomParallelPlanesSampling(const int aSampleCount, const double aMinPlaneDistance = 1.f, const double aMaxPlaneDistance = 100.f);
 		SamplesSeparatedByPlane RandomPointsPartitionedByPlane(const int aSampleCount, const Plane& aPlane,
 			const double aMaxPointDistance = 50.f, const bool anAllowSamplesOverPlaneFlag = true);
 
