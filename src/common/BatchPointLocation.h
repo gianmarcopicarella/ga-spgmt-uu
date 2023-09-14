@@ -5,6 +5,8 @@
 
 namespace SPGMT
 {
+	using Range = std::pair<int, int>;
+
 	struct OnePlaneResult
 	{
 		// True -> Plane above point, False -> Plane below or point contained in plane
@@ -13,14 +15,13 @@ namespace SPGMT
 
 	struct ParallelPlanesResult
 	{
-		using Range = std::pair<int, int>;
+
 		std::vector<int> mySortedPlanesIndices;
 		std::vector<Range> myRanges;
 	};
 
 	struct BaseResult
 	{
-		using Range = std::pair<int, int>;
 		struct ZoneRange
 		{
 			Range myRange;

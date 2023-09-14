@@ -125,14 +125,11 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 
 TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting plane intersections", "[BatchPointLocation]")
 {
-    SPGMT::LocationResult result;
-    std::vector<SPGMT::Plane> planes;
-
     SECTION("One horizontal plane and some random parallel planes intersecting it")
     {
         constexpr auto minPlaneDistance = 20.f;
-        constexpr auto planesCount = 10;
-        constexpr auto pointSamplesCount = 100;
+        constexpr auto planesCount = 100;
+        constexpr auto pointSamplesCount = 10;
         constexpr auto allowSamplesOverPlane = false;
 
         auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
@@ -197,6 +194,80 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
                     REQUIRE(requirement);
                 }
             }
+        }
+
+    }
+}
+
+TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
+{
+    std::vector<SPGMT::Plane> planes;
+
+    SECTION("random planes")
+    {
+        constexpr auto minPlaneDistance = 20.f;
+        constexpr auto planesCount = 10;
+        constexpr auto pointSamplesCount = 10;
+        constexpr auto allowSamplesOverPlane = false;
+
+        auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+
+        std::vector<SPGMT::Point3> points;
+
+        for (auto i = 0; i < planes.size(); ++i)
+        {
+            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+                pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+            std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+        }
+
+        // run function
+        const auto result = SPGMT::BatchPointLocation(planes, points);
+
+        REQUIRE(std::holds_alternative<SPGMT::BaseResult>(result));
+
+        const auto unpackedResult = std::get<SPGMT::BaseResult>(result);
+
+        REQUIRE(unpackedResult.myZoneRangesPairs.size() == points.size());
+
+        // Check ranges
+        for (auto i = 0; i < unpackedResult.myZoneRangesPairs.size(); ++i)
+        {
+            //const auto& zoneRange = unpackedResult.myZoneRangesPairs[i];
+            //const auto& sortedPlanesIndices = zoneRange.myIsFaceZone ?
+            //    unpackedResult.mySortedPlanesPerFaceZone.at(zoneRange.myZoneIndex) :
+            //    unpackedResult.mySortedPlanesPerLineZone.at(zoneRange.myZoneIndex);
+
+            //// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes" 
+            //const int firstPlaneAboveIdx = zoneRange.myRange.first;
+            //const int rangeEnd = zoneRange.myRange.second;
+
+            //if (firstPlaneAboveIdx != -1)
+            //{
+            //    // Check that all planes before are below the point and all planes in the range are above the point
+            //    for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
+            //    {
+            //        const int planeIdx = sortedPlanesIndices[k];
+            //        const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+            //        REQUIRE(requirement);
+            //    }
+
+            //    for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+            //    {
+            //        const int planeIdx = sortedPlanesIndices[k];
+            //        const auto requirement = planes[planeIdx].has_on_negative_side(points[i]);
+            //        REQUIRE(requirement);
+            //    }
+            //}
+            //else
+            //{
+            //    // Check that all planes are below the point (here order and zone dont matter)
+            //    for (int k = 0; k < planes.size(); ++k)
+            //    {
+            //        const auto requirement = planes[k].has_on_positive_side(points[i]);
+            //        REQUIRE(requirement);
+            //    }
+            //}
         }
 
     }

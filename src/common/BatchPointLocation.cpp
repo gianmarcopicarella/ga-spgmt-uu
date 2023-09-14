@@ -6,19 +6,19 @@
 
 namespace SPGMT
 {
-	//struct LineInfo
-	//{
-	//	int myLineIndex;
-	//	FT myYIntercept;
-	//	FT mySlope;
-	//};
+	struct LineInfo
+	{
+		int myLineIndex;
+		FT myY;
+		FT mySlope;
+	};
 
-	//struct Slab
-	//{
-	//	FT myValue;
-	//	std::vector<LineInfo> myLinesInfo;
-	//	bool myStartsAtMinusInfinity{ false };
-	//};
+	struct Slab
+	{
+		FT myValue;
+		std::vector<LineInfo> myLinesInfo;
+		int myVerticalLineIdx{ -1 };
+	};
 
 	namespace Utils
 	{
@@ -63,7 +63,7 @@ namespace SPGMT
 				}
 
 			} Data;
-			//using Data = PlaneIntersectionData;
+
 			typedef void result_type;
 			void operator()(const Line3& aLine)
 			{
@@ -93,7 +93,7 @@ namespace SPGMT
 			typedef void result_type;
 			void operator()(const K& aPoint)
 			{
-				const L vecToPoint { myLine.point(), aPoint };
+				const L vecToPoint{ myLine.point(), aPoint };
 				const auto distanceSign = CGAL::scalar_product(vecToPoint, myLine.to_vector()) > 0.f ? 1.f : -1.f;
 				myDistancePlanesIdxPairs.push_back(std::make_pair(distanceSign * vecToPoint.squared_length(), myPlaneIndex));
 			}
@@ -170,42 +170,53 @@ namespace SPGMT
 		}
 
 	}
-	/*
+
 	std::vector<Slab> ComputeSortedSlabs(const std::vector<Line2>& someLines, const std::vector<Point2>& someSortedPoints)
 	{
+		const auto slopeTransform = [](const auto& aLine) {
+			std::optional<FT> result{ std::nullopt };
+			if (!aLine.is_vertical()) 
+			{
+				const auto& dir = aLine.direction();
+				result = dir.dy() / dir.dx();
+			}
+			return result;
+		};
+
+		const auto sort = [](const auto& aFirst, const auto& aSecond) {
+			return aFirst.myY < aSecond.myY ||
+				(aFirst.myY == aSecond.myY && aFirst.mySlope < aSecond.mySlope);
+		};
+
+		const auto sortInverseSlope = [](const auto& aFirst, const auto& aSecond) {
+			return aFirst.myY < aSecond.myY ||
+				(aFirst.myY == aSecond.myY && aFirst.mySlope > aSecond.mySlope);
+		};
+
 		std::vector<Slab> slabs;
+		std::vector<std::optional<FT>> slopes;
 
 		// Compute slopes for each line
-		std::vector<std::optional<FT>> slopes;
-		std::transform(someLines.begin(), someLines.end(), std::back_inserter(slopes), [](const auto& aLine) {
+		std::transform(someLines.begin(), someLines.end(), std::back_inserter(slopes), slopeTransform);
 
-			if (aLine.is_vertical())
-			{
-				std::nullopt;
-			}
-
-			const auto& dir = aLine.direction();
-			return dir.dy() / dir.dx();
-			});
-
-		// Insert -Infinity slab
+		// Insert slab at -inf (always at index 0)
 		slabs.push_back(Slab{});
-		slabs[0].myStartsAtMinusInfinity = true;
 
 		// Compute remaining slabs
 		for (auto i = 0; i < someSortedPoints.size(); ++i)
 		{
 			Slab currentSlab{ someSortedPoints[i].x() };
 
+			// This inner loop could be optimized by sorting the lines for the first slab and 
+			// then flip the intersecting lines indices at each new slab
 			for (int k = 0; k < someLines.size(); ++k)
 			{
 				const auto& currentLine = someLines[k];
 				if (currentLine.is_vertical())
 				{
-					// A non-vertical line must not have a value
+					// A vertical line must not have a value
 					CGAL_precondition(!slopes[k].has_value());
-
-					currentSlab.myVerticalLineIdxOpt = k;
+					currentSlab.myVerticalLineIdx = k;
 				}
 				else
 				{
@@ -215,30 +226,62 @@ namespace SPGMT
 				}
 			}
 
-			std::sort(currentSlab.myLinesInfo.begin(), currentSlab.myLinesInfo.end(), [](const auto& a, const auto& b) {
-				return a.myYIntercept < b.myYIntercept || (a.myYIntercept == b.myYIntercept && a.mySlope < b.mySlope);
-				});
-
+			std::sort(currentSlab.myLinesInfo.begin(), currentSlab.myLinesInfo.end(), sort);
 			slabs.push_back(currentSlab);
 		}
 
 		// -Infinity slab custom sort case
 		// Copy the lines order from the first slab but in case of same Y-intercept the slope sign is flipped while sorting
 		std::copy(slabs[1].myLinesInfo.begin(), slabs[1].myLinesInfo.end(), std::back_inserter(slabs[0].myLinesInfo));
-		std::sort(slabs[0].myLinesInfo.begin(), slabs[0].myLinesInfo.end(), [](const auto& a, const auto& b) {
-			return a.myYIntercept < b.myYIntercept || (a.myYIntercept == b.myYIntercept && a.mySlope > b.mySlope);
-			});
+		std::sort(slabs[0].myLinesInfo.begin(), slabs[0].myLinesInfo.end(), sortInverseSlope);
 
 		return slabs;
 	}
-	*/
-	/*
-	Currently this function must behave correctly for the following cases:
-	1) No Plane intersections found -> Parallel planes (vertical/horizontal cases too)
-	2) No Plane intersections found -> Only one plane
 
+	int BinarySearchSlab(
+		const std::vector<Slab>& someItems,
+		const Point2& aPoint,
+		const int aLow,
+		const int anHigh)
+	{
+		const int middle = (aLow + anHigh) / 2;
+		const auto& currentSlab = someItems[middle];
 
-	*/
+		if (currentSlab.myValue > aPoint.x())
+		{
+			if (middle == 0)
+			{
+				return 0;
+			}
+			else if (someItems[middle - 1].myValue < aPoint.x())
+			{
+				return middle;
+			}
+			else
+			{
+				return BinarySearchSlab(someItems, aPoint, aLow, middle - 1);
+			}
+		}
+		else if (currentSlab.myValue < aPoint.x())
+		{
+			if (middle == someItems.size() - 1)
+			{
+				return someItems.size();
+			}
+			else if (someItems[middle + 1].myValue > aPoint.x())
+			{
+				return middle + 1;
+			}
+			else
+			{
+				return BinarySearchSlab(someItems, aPoint, middle + 1, anHigh);
+			}
+		}
+		else
+		{
+			return middle + 1;
+		}
+	}
 
 	std::pair<int, bool> BinarySearchSlab(
 		const std::vector<Line2>& someItems,
@@ -269,7 +312,7 @@ namespace SPGMT
 		{
 			if (middle == someItems.size() - 1)
 			{
-				return std::make_pair(someItems.size(), true);
+				return std::make_pair(static_cast<int>(someItems.size()), true);
 			}
 			else if (someItems[someSortedItemIndices[middle + 1]].has_on_negative_side(aPoint))
 			{
@@ -302,11 +345,11 @@ namespace SPGMT
 		{
 			if (middle == 0)
 			{
-				return std::make_pair(0, someItems.size());
+				return std::make_pair(0, static_cast<int>(someItems.size()));
 			}
 			else if (someItems[someSortedItemIndices[middle - 1]].has_on_positive_side(aPoint))
 			{
-				return std::make_pair(middle, someItems.size());
+				return std::make_pair(middle, static_cast<int>(someItems.size()));
 			}
 			else
 			{
@@ -319,18 +362,18 @@ namespace SPGMT
 			{
 				return std::make_pair(-1, -1);
 			}
-			else if (someItems[someSortedItemIndices[middle  +1]].has_on_negative_side(aPoint))
+			else if (someItems[someSortedItemIndices[middle + 1]].has_on_negative_side(aPoint))
 			{
-				return std::make_pair(middle + 1, someItems.size());
+				return std::make_pair(middle + 1, static_cast<int>(someItems.size()));
 			}
 			else
 			{
 				return BinarySearchItems(someItems, someSortedItemIndices, aPoint, middle + 1, anHigh);
 			}
 		}
-		else if(middle < someItems.size() - 1)
+		else if (middle < someItems.size() - 1)
 		{
-			return std::make_pair(middle + 1, someItems.size());
+			return std::make_pair(middle + 1, static_cast<int>(someItems.size()));
 		}
 		else
 		{
@@ -400,11 +443,11 @@ namespace SPGMT
 			ParallelPlanesResult resultPayload;
 
 			auto distanceIndexPlanes =
-				HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, 
+				HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes,
 					somePlanes[0].perpendicular_line(somePlanes[0].point()));
 			std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
 			std::transform(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), std::back_inserter(resultPayload.mySortedPlanesIndices), transform);
-			
+
 			for (const auto& queryPoint : somePoints)
 			{
 				const auto range = BinarySearchItems(somePlanes, resultPayload.mySortedPlanesIndices, queryPoint, 0, somePlanes.size());
@@ -415,43 +458,27 @@ namespace SPGMT
 			return result;
 		}
 
-		// Find 2d line intersections
-		std::vector<Point2> intersectionPoints;
+		// Get 2d unique lines
+		std::vector<Line2> lines2D;
+		std::transform(linesData3D.begin(), linesData3D.end(), std::back_inserter(lines2D),
+			std::bind(&PlaneIntersectionStrategy::PlaneIntersectionData::GetLine2, std::placeholders::_1));
+		lines2D.erase(std::unique(lines2D.begin(), lines2D.end()), lines2D.end());
 
-		{
-			// Get 2D unique lines
-			std::vector<Line2> lines2D;
-			std::transform(linesData3D.begin(), linesData3D.end(), std::back_inserter(lines2D),
-				std::bind(&PlaneIntersectionStrategy::PlaneIntersectionData::GetLine2, std::placeholders::_1));
-			lines2D.erase(std::unique(lines2D.begin(), lines2D.end()), lines2D.end());
-
-			// Compute unique intersection points
-			intersectionPoints = HandleIntersections<LineIntersectionStrategy>(lines2D);
-			intersectionPoints.erase(std::unique(intersectionPoints.begin(), intersectionPoints.end()), intersectionPoints.end());
-		}
+		// Compute intersection points
+		auto& intersectionPoints = HandleIntersections<LineIntersectionStrategy>(lines2D);
 
 		// 3) Edge case: parallel 2d lines
 		if (intersectionPoints.empty())
 		{
 			BaseResult resultPayload;
 
-			// Get 2D unique lines
-			std::vector<Line2> lines2D;
-			std::transform(linesData3D.begin(), linesData3D.end(), std::back_inserter(lines2D),
-				std::bind(&PlaneIntersectionStrategy::PlaneIntersectionData::GetLine2, std::placeholders::_1));
-			lines2D.erase(std::unique(lines2D.begin(), lines2D.end()), lines2D.end());
-			
 			// Sort 2D lines
 			std::vector<int> linesIndices_BS;
 			auto distanceIndexLines =
-				HandleIntersectionsWith<ParallelItemsStrategy<Line2, Point2, Vec2>>(lines2D, 
+				HandleIntersectionsWith<ParallelItemsStrategy<Line2, Point2, Vec2>>(lines2D,
 					lines2D.front().perpendicular(lines2D.front().point()));
 			std::sort(distanceIndexLines.begin(), distanceIndexLines.end(), sort);
 			std::transform(distanceIndexLines.begin(), distanceIndexLines.end(), std::back_inserter(linesIndices_BS), transform);
-
-			// Define face zones and line zones
-			std::vector<std::vector<int>> faceZones { lines2D.size() + 1, std::vector<int>{} };
-			std::vector<std::vector<int>> lineZones { lines2D.size(), std::vector<int>{} };
 
 			// Required to consider, among all vertically intersecting planes, only one
 			std::vector<std::vector<int>> lineZones_BS{ lines2D.size(), std::vector<int>{} };
@@ -463,11 +490,11 @@ namespace SPGMT
 				// The point lies on a face zone
 				if (zoneResult.second)
 				{
-					auto& sortedIndices = faceZones[zoneResult.first];
-
 					// Sort planes indices for this zone
-					if (sortedIndices.empty())
+					if (resultPayload.mySortedPlanesPerFaceZone.find(zoneResult.first) ==
+						resultPayload.mySortedPlanesPerFaceZone.end())
 					{
+						std::vector<int> sortedIndices;
 						auto distanceIndexPlanes =
 							HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, Line3{ queryPoint, Vec3{0,1,0} });
 						std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
@@ -477,6 +504,9 @@ namespace SPGMT
 						resultPayload.mySortedPlanesPerFaceZone.insert(std::make_pair(zoneResult.first, sortedIndices));
 					}
 
+					// Fetch z-sorted planes indices for current slab and face pair
+					const auto& sortedIndices = resultPayload.mySortedPlanesPerFaceZone.at(zoneResult.first);
+
 					// Search for the first plane above the query point
 					const auto planesRange = BinarySearchItems(somePlanes, sortedIndices, queryPoint, 0, somePlanes.size());
 					constexpr auto isFaceZone = true;
@@ -485,19 +515,21 @@ namespace SPGMT
 				// The point lies over a 2d line
 				else
 				{
-					auto& sortedIndices = lineZones[zoneResult.first];
 					auto& sortedIndices_BS = lineZones_BS[zoneResult.first];
 
-					if (sortedIndices.empty())
+					// Sort planes indices for this zone
+					// Note that sortedIndices_BS.empty() would be anyway a valid test here
+					if (resultPayload.mySortedPlanesPerFaceZone.find(zoneResult.first) ==
+						resultPayload.mySortedPlanesPerFaceZone.end())
 					{
-						// Sort planes indices for this line zone
+						std::vector<int> sortedIndices;
 						auto distanceIndexPlanes =
 							HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, Line3{ queryPoint, Vec3{0,1,0} });
 						std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
 						std::transform(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), std::back_inserter(sortedIndices), transform);
 
 						// Store planes in the output
-						resultPayload.mySortedPlanesPerLineZone.insert(std::make_pair(zoneResult.first, sortedIndices));
+						resultPayload.mySortedPlanesPerFaceZone.insert(std::make_pair(zoneResult.first, sortedIndices));
 
 						// From the sorted list of indices, remove all the planes with same z by 
 						// keeping only the first one encountered in the list
@@ -517,8 +549,73 @@ namespace SPGMT
 			return result;
 		}
 
-		// Build slabs and follow base strategy
+		// Keep only unique intersection points
+		intersectionPoints.erase(std::unique(intersectionPoints.begin(), intersectionPoints.end()), intersectionPoints.end());
 
+		// Sort unique intersection points along x-axis
+		std::sort(intersectionPoints.begin(), intersectionPoints.end());
+
+		// Compute slabs
+		auto& slabs = ComputeSortedSlabs(lines2D, intersectionPoints);
+
+		BaseResult resultPayload;
+
+		for (const auto& queryPoint : somePoints)
+		{
+			const auto& projectedQueryPoint = Project3DPoint(queryPoint);
+			const auto slabIndex = BinarySearchSlab(slabs, projectedQueryPoint, 0, slabs.size());
+			auto& currentSlab = slabs[slabIndex];
+
+			// 1) Query point lies on a face boundary
+			if (currentSlab.myVerticalLineIdx > -1 &&
+				lines2D[currentSlab.myVerticalLineIdx].has_on(projectedQueryPoint))
+			{
+				CGAL_precondition(false);
+			}
+
+			// Create a list of sorted lines indices based on the current slab sorting and find the top enclosing line of query point
+			std::vector<int> sortedLinesIndices;
+			const auto linesTransform = [](const auto& aLineInfo) {return aLineInfo.myLineIndex; };
+			std::transform(currentSlab.myLinesInfo.begin(), currentSlab.myLinesInfo.end(),
+				std::back_inserter(sortedLinesIndices), linesTransform);
+			const auto topLineInfo = BinarySearchSlab(lines2D, sortedLinesIndices, projectedQueryPoint, 0, lines2D.size());
+
+			// 2) The point is not over a 2d line
+			if (topLineInfo.second)
+			{
+				const int faceIndex = topLineInfo.first;
+				const int globalZoneIndex = slabIndex * faceIndex + faceIndex;
+				
+				if (resultPayload.mySortedPlanesPerFaceZone.find(globalZoneIndex) ==
+					resultPayload.mySortedPlanesPerFaceZone.end())
+				{
+					std::vector<int> sortedIndices;
+					auto distanceIndexPlanes =
+						HandleIntersectionsWith<ParallelItemsStrategy<Line3, Point3, Vec3>>(somePlanes, Line3{ queryPoint, Vec3{0,1,0} });
+					std::sort(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), sort);
+					std::transform(distanceIndexPlanes.begin(), distanceIndexPlanes.end(), std::back_inserter(sortedIndices), transform);
+
+					// Store planes in the output
+					resultPayload.mySortedPlanesPerFaceZone.insert(std::make_pair(globalZoneIndex, sortedIndices));
+				}
+
+				// Fetch z-sorted planes indices for current slab and face pair
+				const auto& sortedIndices = resultPayload.mySortedPlanesPerFaceZone.at(globalZoneIndex);
+
+				// Search for the first plane above the query point
+				const auto planesRange = BinarySearchItems(somePlanes, sortedIndices, queryPoint, 0, somePlanes.size());
+				constexpr auto isFaceZone = true;
+				resultPayload.myZoneRangesPairs.push_back(BaseResult::ZoneRange{ planesRange, globalZoneIndex, isFaceZone });
+			}
+			// 3) Query point lies on a face boundary (non-vertical line)
+			else
+			{
+				const int lineIndex = topLineInfo.first;
+				CGAL_precondition(false);
+			}
+		}
+
+		result = resultPayload;
 		return result;
 	}
 }
