@@ -185,17 +185,17 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
             }
         }
     }
-}
-*/
+}*/
+
 TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 {
     SECTION("random planes")
     {
         constexpr auto minPlaneDistance = 3.f;
-        constexpr auto planesCount = 25;
-        constexpr auto pointSamplesCount = 10000;
+        constexpr auto planesCount = 10;
+        constexpr auto pointSamplesCount = 100;
         constexpr auto allowSamplesOverPlane = true;
-
+        
         auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
 
         std::vector<SPGMT::Point3> points;
@@ -206,6 +206,12 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
                     pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
             std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
         }
+
+        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 10000);
+        std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+
+        const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 100);
+        std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
 
         // run function
         const auto result = SPGMT::BatchPointLocation(planes, points);
@@ -233,11 +239,14 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
             if (firstPlaneAboveIdx != planes.size())
             {
                 // Check that all planes before are below the point and all planes in the range are above the point
-                for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
+                for (int k = 0; k < firstPlaneAboveIdx; ++k)
                 {
                     const int planeIdx = sortedPlanesIndices[k];
                     const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
-
+                    if (!requirement)
+                    {
+                        std::cout << "stop" << std::endl;
+                    }
                     REQUIRE(requirement);
                 }
 
@@ -245,7 +254,10 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
                 {
                     const int planeIdx = sortedPlanesIndices[k];
                     const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
-
+                    if (!requirement)
+                    {
+                        std::cout << "stop" << std::endl;
+                    }
                     REQUIRE(requirement);
                 }
             }
@@ -255,6 +267,10 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
                 for (int k = 0; k < planes.size(); ++k)
                 {
                     const auto requirement = planes[k].has_on_positive_side(points[i]);
+                    if (!requirement)
+                    {
+                        std::cout << "stop" << std::endl;
+                    }
                     REQUIRE(requirement);
                 }
             }

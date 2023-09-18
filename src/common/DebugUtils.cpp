@@ -6,7 +6,13 @@
 
 namespace SPGMT
 {
-	const unsigned long int SEED = 4036410698;
+	const unsigned long int SEED = 819380795;
+
+	CGAL::Random& GetDefaultRandom()
+	{
+		static CGAL::Random rand{ /*SEED*/ };
+		return rand;
+	}
 
     namespace
     {
@@ -21,6 +27,20 @@ namespace SPGMT
 
             std::vector<Line3>& myOutResult;
         };
+
+		struct VisitorPoint
+		{
+			typedef void result_type;
+			void operator()(const Point3& aLine)
+			{
+				myOutResult.push_back(aLine);
+			}
+			void operator()(const Plane&) {}
+			void operator()(const Line3&) {}
+
+			std::vector<Point3>& myOutResult;
+		};
+
         std::vector<Line3> locGetLinesIntersections(const std::vector<Plane>& somePlanes)
         {
             std::vector<Line3> result;
@@ -38,10 +58,49 @@ namespace SPGMT
             }
             return result;
         }
+
+		std::vector<Point3> locGetPointsIntersections(const std::vector<Plane>& somePlanes)
+		{
+			std::vector<Point3> result;
+			for (int i = 0; i < somePlanes.size(); ++i)
+			{
+				for (int k = i + 1; k < somePlanes.size(); ++k)
+				{
+					for (int j = k + 1; j < somePlanes.size(); ++j)
+					{
+						const auto intersection = CGAL::intersection(somePlanes[i], somePlanes[k], somePlanes[j]);
+						if (const auto* data = intersection.get_ptr())
+						{
+							VisitorPoint visitor{ result };
+							data->apply_visitor(visitor);
+						}
+					}
+				}
+			}
+			return result;
+		}
     }
 
 	namespace Debug
 	{
+		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount)
+		{
+			std::vector<Point3> samples;
+			const auto intersectionPoints = locGetPointsIntersections(somePlanes);
+
+			if (intersectionPoints.empty())
+			{
+				return samples;
+			}
+
+			CGAL::Random random{ GetDefaultRandom() };
+			while (samples.size() < aSampleCount)
+			{
+				samples.push_back(intersectionPoints[random.get_int(0, intersectionPoints.size())]);
+			}
+			return samples;
+		}
+
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount)
         {
             std::vector<Point3> samples;
@@ -52,7 +111,7 @@ namespace SPGMT
                 return samples;
             }
 
-            CGAL::Random random{ /*SEED*/ };
+            CGAL::Random random{ GetDefaultRandom() };
             while(samples.size() < aSampleCount)
             {
                 const auto & line = intersectionLines[random.get_int(0, intersectionLines.size())];
@@ -86,8 +145,8 @@ namespace SPGMT
 		{
 			constexpr auto squareSide = 50.f;
 
-			CGAL::Random_points_on_square_2<Vec2> generator{ squareSide/*, CGAL::Random(SEED)*/};
-			CGAL::Random random{ /*SEED*/ };
+			CGAL::Random_points_on_square_2<Vec2> generator{ squareSide, GetDefaultRandom() };
+			CGAL::Random random{ GetDefaultRandom() };
 
 			SamplesSeparatedByPlane result;
 			auto samplesCounter{ -1 };
@@ -182,8 +241,11 @@ namespace SPGMT
 			// TODO: I will need to guarantee a minimum distance between parallel planes (if i use an inaccurate numeric representation)
 			CGAL_precondition((aMaxPlaneHeight - aMinPlaneHeight) >= aSampleCount);
 
-			CGAL::Random_points_on_sphere_3<Vec3> generator{ radius/*, CGAL::Random(SEED)*/ };
-			CGAL::Random random{ /*SEED*/ };
+            //constexpr auto SEED = 10;
+            //CGAL::Random ran (SEED);
+
+			CGAL::Random_points_on_sphere_3<Vec3> generator{ radius, GetDefaultRandom() };
+			CGAL::Random random{ GetDefaultRandom() };
 			std::vector<Plane> samples;
 
 			samples.reserve(aSampleCount);

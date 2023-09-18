@@ -244,7 +244,8 @@ namespace SPGMT
         template<typename T, typename K>
         int BinarySearch(const std::vector<T> & someItems, const std::vector<int>& someSortedIndices, const K& aPoint, int aMin, int aMax)
         {
-            const auto mid = (aMin + aMax) / 2;
+
+            const auto mid = aMin + (aMax - aMin) / 2;
             const auto& item = someItems[someSortedIndices[mid]];
 
             if (item.has_on_negative_side(aPoint))
@@ -292,7 +293,7 @@ namespace SPGMT
         template<typename T, typename K>
         int BinarySearch(const std::vector<T> & someItems, const K& aPoint, int aMin, int aMax)
         {
-            const auto mid = (aMin + aMax) / 2;
+            const auto mid = aMin + (aMax - aMin) / 2;
             const auto& item = someItems[mid];
 
             if (item.has_on_negative_side(aPoint))
@@ -340,7 +341,7 @@ namespace SPGMT
 
         int FindSlabIndex(const std::vector<FT> & someItems, const Point2& aPoint, int aMin, int aMax)
         {
-            const auto mid = (aMin + aMax) / 2;
+            const auto mid = aMin + (aMax - aMin) / 2;
             const auto& x = someItems[mid];
 
             if (aPoint.x() < x)
@@ -393,8 +394,9 @@ namespace SPGMT
         struct LineData
         {
             std::vector<Line2> myLines;
-            std::vector<std::vector<FT>> mySortedVertices;
+            std::vector<std::vector<std::pair<FT, int>>> mySortedVertices;
             std::vector<Point2> myUniqueVertices;
+            std::vector<int> mySegmentsCount;
 
             std::function<FT(const Point2&)> GetGetter(const Line2& aLine)
             {
@@ -415,11 +417,11 @@ namespace SPGMT
                 while(left < right)
                 {
                     const int mid = (left + right) / 2;
-                    if(values[mid] == getter(aPoint))
+                    if(values[mid].first == getter(aPoint))
                     {
-                        return mid;
+                        return values[mid].second;
                     }
-                    else if(getter(aPoint) < values[mid])
+                    else if(getter(aPoint) < values[mid].first)
                     {
                         right = mid - 1;
                     }
@@ -436,20 +438,14 @@ namespace SPGMT
                 CGAL_precondition(myLines[aLineIdx].has_on(aPoint));
                 const auto& values = mySortedVertices[aLineIdx];
                 const auto& getter = GetGetter(myLines[aLineIdx]);
-
-                if(getter(aPoint) < values[0])
-                {
-                    return 0;
-                }
-
                 int left = 0, right = values.size();
                 while(left < right)
                 {
                     const int mid = (left + right) / 2;
-                    if(getter(aPoint) < values[mid])
+                    if(getter(aPoint) < values[mid].first)
                     {
                         if(mid == 0) return 0;
-                        else if(getter(aPoint) > values[mid - 1])
+                        else if(getter(aPoint) > values[mid - 1].first)
                         {
                             return mid;
                         }
@@ -458,10 +454,10 @@ namespace SPGMT
                             right = mid - 1;
                         }
                     }
-                    else if(getter(aPoint) > values[mid])
+                    else if(getter(aPoint) > values[mid].first)
                     {
-                        if(mid == values.size() - 1) return mid;
-                        else if(getter(aPoint) < values[mid + 1])
+                        if(mid == values.size() - 1) return values.size();
+                        else if(getter(aPoint) < values[mid + 1].first)
                         {
                             return mid + 1;
                         }
@@ -475,24 +471,24 @@ namespace SPGMT
                         CGAL_precondition(false);
                     }
                 }
+
                 return -1;
             }
         };
+
 
         LineData locComputeLinesWrapper(const std::vector<Line3>& someLines)
         {
             LineData data;
 
-            data.myLines = locProjectOnXZPlane(someLines);
-            data.myLines.erase( std::unique(data.myLines.begin(), data.myLines.end(),
-                                CGAL::Equal_to<Line2, Line2>()), data.myLines.end());
+            data.myLines = locProjectOnXZPlaneUnique(someLines);
 
             for(int i = 0; i < data.myLines.size(); ++i)
             {
                 const auto& line = data.myLines[i];
                 const auto getter = data.GetGetter(line);
 
-                std::vector<FT> values;
+                std::vector<std::pair<FT, int>> values;
 
                 for(int k = 0; k < data.myLines.size(); ++k)
                 {
@@ -503,8 +499,20 @@ namespace SPGMT
                         {
                             if (const Point2* p = boost::get<Point2>(&*result))
                             {
-                                values.push_back(getter(*p));
-                                data.myUniqueVertices.push_back(*p);
+                                const auto vertexIter = std::find_if(data.myUniqueVertices.begin(), data.myUniqueVertices.end(), [&p](auto& anItem) {
+                                    return anItem == *p;
+                                });
+
+                                if (vertexIter == data.myUniqueVertices.end())
+                                {
+                                    values.push_back(std::make_pair(getter(*p), data.myUniqueVertices.size()));
+                                    data.myUniqueVertices.push_back(*p);
+                                }
+                                else
+                                {
+                                    const int vertexIndex = std::distance(data.myUniqueVertices.begin(), vertexIter);
+                                    values.push_back(std::make_pair(getter(*p), vertexIndex));
+                                }
                             }
                             else
                             {
@@ -514,12 +522,20 @@ namespace SPGMT
                     }
                 }
 
-                std::sort(values.begin(), values.end(), CGAL::Less<FT, FT>());
+                std::sort(values.begin(), values.end(), [](auto & a, auto& b) { return a.first < b.first; });
                 data.mySortedVertices.push_back(values);
+
+                if(i == 0)
+                {
+                    data.mySegmentsCount.push_back(0);
+                }
+                else
+                {
+                    data.mySegmentsCount.push_back(data.mySortedVertices[i - 1].size() + 1 + data.mySegmentsCount.back());
+                }
             }
 
-            data.myUniqueVertices.erase( std::unique(data.myUniqueVertices.begin(), data.myUniqueVertices.end(),
-                                            CGAL::Less<Point2, Point2>()), data.myUniqueVertices.end());
+            data.mySegmentsCount.push_back(data.mySortedVertices.back().size() + 1 + data.mySegmentsCount.back());
 
             return data;
         }
@@ -617,6 +633,42 @@ namespace SPGMT
             return partition;
         }
 
+        int FindFirstPlaneAbovePoint(const std::vector<Plane> & someItems, const std::vector<int> & someSortedIndices, const Point3& aPoint)
+        {
+            for(int i = 0; i < someSortedIndices.size(); ++i)
+            {
+                if(!someItems[someSortedIndices[i]].has_on_positive_side(aPoint))
+                {
+                    return i;
+                }
+            }
+
+            return someItems.size();
+        }
+
+        int FindFirstLineAbovePoint(const std::vector<Line2> & someItems, const std::vector<int> & someSortedIndices, const Point2& aPoint)
+        {
+            for(int i = 0; i < someSortedIndices.size(); ++i)
+            {
+                if(!someItems[someSortedIndices[i]].has_on_positive_side(aPoint))
+                {
+                    return i;
+                }
+            }
+
+            return someItems.size();
+        }
+
+    }
+
+    bool SameLists(std::vector<int> a, std::vector<int> b)
+    {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); ++i)
+        {
+            if (a[i] != b[i]) return false;
+        }
+        return true;
     }
 
     Result BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
@@ -655,27 +707,25 @@ namespace SPGMT
         // Project 3d lines and construct a list of enhanced lines
 
 
-        // Compute 3d lines projection on xz-plane
-        const auto lines2d = locProjectOnXZPlaneUnique(lines3d);
-        constexpr auto uniqueVertices = true;
-        const auto vertices = locFindIntersections<Line2Line2Visitor>(lines2d, uniqueVertices);
+        // Compute lines data
+        auto linesData = locComputeLinesWrapper(lines3d);
 
         // 2nd edge case: single or parallel lines
-        if(vertices.empty())
+        if(linesData.myUniqueVertices.empty())
         {
-            const auto sortedLinesIndices = locGetSortedItemsIndicesFromIntersections<LineParallelLineVisitor>(lines2d,
-                                                                                                               lines2d[0].perpendicular(lines2d[0].point()));
+            const auto sortedLinesIndices = locGetSortedItemsIndicesFromIntersections<LineParallelLineVisitor>(linesData.myLines,
+                                                                                                               linesData.myLines[0].perpendicular(linesData.myLines[0].point()));
             Result result;
             for(const auto& queryPoint : somePoints)
             {
                 const Point2 projectedPoint { queryPoint.x(), queryPoint.z() };
-                const auto firstUpperLineIdx = BinarySearch<Line2, Point2>(lines2d, sortedLinesIndices,
+                const auto firstUpperLineIdx = BinarySearch<Line2, Point2>(linesData.myLines, sortedLinesIndices,
                                                                            projectedPoint, 0, sortedLinesIndices.size());
 
                 const auto isPointAlongLine = firstUpperLineIdx < sortedLinesIndices.size() &&
-                        lines2d[sortedLinesIndices[firstUpperLineIdx]].has_on(projectedPoint);
+                        linesData.myLines[sortedLinesIndices[firstUpperLineIdx]].has_on(projectedPoint);
 
-                const int bucketIndex = isPointAlongLine ? firstUpperLineIdx : (firstUpperLineIdx + lines2d.size());
+                const int bucketIndex = isPointAlongLine ? firstUpperLineIdx : (firstUpperLineIdx + linesData.myLines.size());
 
                 if(result.mySortedPlanesIndices.find(bucketIndex) == result.mySortedPlanesIndices.end())
                 {
@@ -693,26 +743,37 @@ namespace SPGMT
         }
 
         // Slab-based approach
-        const auto partition = locComputeSlabs(vertices, lines2d);
+        const auto partition = locComputeSlabs(linesData.myUniqueVertices, linesData.myLines);
 
         int cacheUsageCount = 0;
 
         Result result;
+
         for(const auto& queryPoint : somePoints)
         {
             const Point2 projectedPoint { queryPoint.x(), queryPoint.z() };
             int slabIdx = FindSlabIndex(partition.myUniqueXValues, projectedPoint, 0, partition.myUniqueXValues.size());
+            int globalBucketIndex = -1;
 
             // Found slab idx and it is not -inf
             if(slabIdx > -1)
             {
-                // Along vertical axis
+                CGAL_precondition(partition.myUniqueXValues[slabIdx] <= projectedPoint.x());
+                // Check if point is along vertical slab line
                 if(partition.myUniqueXValues[slabIdx] == projectedPoint.x())
                 {
-                    // Use bruteforce
-                    // Return range
-                    result.myRangeWrappers.push_back({Range{}, -1});
-                    continue;
+                    const auto vLineIter = partition.myVerticalLineIndex.find(slabIdx);
+                    if(vLineIter != partition.myVerticalLineIndex.end())
+                    {
+                        const int vLineIdx = vLineIter->second;
+                        const int segmentIdx = linesData.FindSegmentIndex(projectedPoint, vLineIdx);
+                        if(segmentIdx > -1)
+                        {
+                            // Compute global index
+                            globalBucketIndex = linesData.myUniqueVertices.size() + // Vertices count
+                                linesData.mySegmentsCount[vLineIdx] + segmentIdx;
+                        }
+                    }
                 }
 
                 slabIdx += 1;
@@ -723,23 +784,43 @@ namespace SPGMT
             }
 
             const auto& sortedLines = partition.mySortedLines[slabIdx];
-            const int lineIdx = BinarySearch(lines2d, sortedLines, projectedPoint, 0, sortedLines.size());
+            // FindFirstLineAbovePoint(linesData.myLines, sortedLines, projectedPoint);
+            const int lineIdx = BinarySearch(linesData.myLines, sortedLines, projectedPoint, 0, sortedLines.size());
 
-            if(lineIdx < sortedLines.size() && lines2d[sortedLines[lineIdx]].has_on(projectedPoint))
+            if(lineIdx < sortedLines.size() && linesData.myLines[sortedLines[lineIdx]].has_on(projectedPoint))
             {
-                // Use bruteforce
-                // Return range
-                result.myRangeWrappers.push_back({Range{}, -1});
-                continue;
+                // Check if point is a vertex
+                const int vertexIdx = linesData.FindVertexIndex(projectedPoint, sortedLines[lineIdx]);
+                if(vertexIdx > -1)
+                {
+                    // Compute global index
+                    globalBucketIndex = vertexIdx;
+                    CGAL_precondition(vertexIdx < linesData.myUniqueVertices.size());
+                }
+                else
+                {
+                    const int segmentIdx = linesData.FindSegmentIndex(projectedPoint, sortedLines[lineIdx]);
+                    if (segmentIdx > -1)
+                    {
+                        // Compute global index
+                        globalBucketIndex = linesData.myUniqueVertices.size() + // Vertices count
+                            linesData.mySegmentsCount[sortedLines[lineIdx]] + segmentIdx;
+                    }
+                }
             }
 
-            const int globalFaceIdx = lineIdx + slabIdx * lines2d.size();
+            if(globalBucketIndex == -1)
+            {
+                globalBucketIndex = linesData.myUniqueVertices.size() + // Vertices count
+                                    linesData.mySegmentsCount.back() + // Segments count
+                                    lineIdx + slabIdx * (linesData.myLines.size() + 1); // Faces count
+            }
 
-            if(result.mySortedPlanesIndices.find(globalFaceIdx) == result.mySortedPlanesIndices.end())
+            if(result.mySortedPlanesIndices.find(globalBucketIndex) == result.mySortedPlanesIndices.end())
             {
                 const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
                                                                                                              Line3{queryPoint, Vec3{0,1,0}});
-                result.mySortedPlanesIndices.insert(std::make_pair(globalFaceIdx, sortedPlanesIndices));
+                result.mySortedPlanesIndices.insert(std::make_pair(globalBucketIndex, sortedPlanesIndices));
             }
             else
             {
@@ -747,10 +828,13 @@ namespace SPGMT
                 cacheUsageCount++;
             }
 
-            const auto sortedPlanesIndices = result.mySortedPlanesIndices.at(globalFaceIdx);
+            const auto sortedPlanesIndices = result.mySortedPlanesIndices.at(globalBucketIndex);
+
+            //CGAL_precondition(SameLists(sortedPlanesIndices, sortedPlanesIndices_cache));
+            //FindFirstPlaneAbovePoint(somePlanes, sortedPlanesIndices, queryPoint);
             const auto firstUpperPlaneIdx = BinarySearch<Plane, Point3>(somePlanes, sortedPlanesIndices,
                                                                         queryPoint, 0, sortedPlanesIndices.size());
-            result.myRangeWrappers.push_back({Range{firstUpperPlaneIdx, somePlanes.size()}, globalFaceIdx });
+            result.myRangeWrappers.push_back({Range{firstUpperPlaneIdx, somePlanes.size()}, globalBucketIndex });
         }
 
         std::cout << "Cache used: " << cacheUsageCount << " times";

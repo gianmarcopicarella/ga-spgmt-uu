@@ -13,6 +13,7 @@ namespace SPGMT
 			std::vector<Point3> mySamples;
 			int myPositiveCount{ 0 }, myNegativeCount{ 0 }, myOverSurfaceCount{ 0 };
 		};
+		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount);
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount);
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount);
 		std::vector<Plane> RandomPlaneSampling(const int aSampleCount, const double aMinPlaneHeight = -100.f, const double aMaxPlaneHeight = 100.f);
