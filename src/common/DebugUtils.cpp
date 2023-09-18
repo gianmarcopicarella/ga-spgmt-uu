@@ -6,8 +6,70 @@
 
 namespace SPGMT
 {
+	const unsigned long int SEED = 4036410698;
+
+    namespace
+    {
+        struct Visitor
+        {
+            typedef void result_type;
+            void operator()(const Line3& aLine)
+            {
+                myOutResult.push_back(aLine);
+            }
+            void operator()(const Plane&) {}
+
+            std::vector<Line3>& myOutResult;
+        };
+        std::vector<Line3> locGetLinesIntersections(const std::vector<Plane>& somePlanes)
+        {
+            std::vector<Line3> result;
+            for(int i = 0; i < somePlanes.size(); ++i)
+            {
+                for(int k = i + 1; k < somePlanes.size(); ++k)
+                {
+                    const auto intersection = CGAL::intersection(somePlanes[i], somePlanes[k]);
+                    if (const auto* data = intersection.get_ptr())
+                    {
+                        Visitor visitor {result};
+                        data->apply_visitor(visitor);
+                    }
+                }
+            }
+            return result;
+        }
+    }
+
 	namespace Debug
 	{
+        std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount)
+        {
+            std::vector<Point3> samples;
+            const auto intersectionLines = locGetLinesIntersections(somePlanes);
+
+            if(intersectionLines.empty())
+            {
+                return samples;
+            }
+
+            CGAL::Random random{ /*SEED*/ };
+            while(samples.size() < aSampleCount)
+            {
+                const auto & line = intersectionLines[random.get_int(0, intersectionLines.size())];
+                const auto alongLinePoint = line.point() + line.to_vector() * random.get_double(-100.f, 100.f);
+                const auto alongVerticalPoint = alongLinePoint + Vec3 {0,1,0} * random.get_double(-100.f, 100.f);
+
+                samples.push_back(alongLinePoint);
+                if(samples.size() < aSampleCount)
+                {
+                    samples.push_back(alongVerticalPoint);
+                }
+            }
+
+
+            return samples;
+        }
+
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount)
 		{
 			std::vector<Point3> samples;
@@ -23,8 +85,9 @@ namespace SPGMT
 			const double aMaxPointDistance, const bool anAllowSamplesOverPlaneFlag)
 		{
 			constexpr auto squareSide = 50.f;
-			CGAL::Random_points_on_square_2<Vec2> generator{ squareSide };
-			CGAL::Random random;
+
+			CGAL::Random_points_on_square_2<Vec2> generator{ squareSide/*, CGAL::Random(SEED)*/};
+			CGAL::Random random{ /*SEED*/ };
 
 			SamplesSeparatedByPlane result;
 			auto samplesCounter{ -1 };
@@ -119,8 +182,8 @@ namespace SPGMT
 			// TODO: I will need to guarantee a minimum distance between parallel planes (if i use an inaccurate numeric representation)
 			CGAL_precondition((aMaxPlaneHeight - aMinPlaneHeight) >= aSampleCount);
 
-			CGAL::Random_points_on_sphere_3<Vec3> generator{ radius };
-			CGAL::Random random;
+			CGAL::Random_points_on_sphere_3<Vec3> generator{ radius/*, CGAL::Random(SEED)*/ };
+			CGAL::Random random{ /*SEED*/ };
 			std::vector<Plane> samples;
 
 			samples.reserve(aSampleCount);
