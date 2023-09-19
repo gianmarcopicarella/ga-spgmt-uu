@@ -10,7 +10,6 @@ Currently this function must behave correctly for the following cases:
 2) No Plane intersections found -> Only one plane. DONE
 */
 
-/*
 TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
 {
 	SECTION("100 Random Points")
@@ -122,7 +121,7 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
         constexpr auto planesCount = 68;
         constexpr auto pointSamplesCount = 0;
         constexpr auto specialPointSamplesCount = 10000;
-        constexpr auto allowSamplesOverPlane = false;
+        constexpr auto allowSamplesOverPlane = true;
 
         auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
         {
@@ -185,15 +184,15 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
             }
         }
     }
-}*/
+}
 
 TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 {
     SECTION("random planes")
     {
-        constexpr auto minPlaneDistance = 3.f;
-        constexpr auto planesCount = 10;
-        constexpr auto pointSamplesCount = 100;
+        constexpr auto minPlaneDistance = 20.f;
+        constexpr auto planesCount = 20;
+        constexpr auto pointSamplesCount = 10000;
         constexpr auto allowSamplesOverPlane = true;
         
         auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
@@ -207,10 +206,10 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
             std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
         }
 
-        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 10000);
+        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 100000);
         std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
 
-        const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 100);
+        const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
         std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
 
         // run function
@@ -222,13 +221,6 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
         for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
         {
             const auto& zoneRange = result.myRangeWrappers[i];
-
-            // TEMPORARY SKIP
-            if(zoneRange.myRefIndex == -1)
-            {
-                continue;
-            }
-
             const auto& sortedPlanesIndices =
                     result.mySortedPlanesIndices.at(zoneRange.myRefIndex);
 

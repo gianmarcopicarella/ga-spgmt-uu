@@ -6,7 +6,7 @@
 
 namespace SPGMT
 {
-	const unsigned long int SEED = 819380795;
+	const unsigned long int SEED = 23322392398;
 
 	CGAL::Random& GetDefaultRandom()
 	{
