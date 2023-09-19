@@ -92,22 +92,6 @@ namespace SPGMT
 			std::vector<payload_type>& myOutResult;
 		};
 
-		struct Line2Line2Visitor
-		{
-			typedef Point2 payload_type;
-			typedef void result_type;
-			void operator()(const Point2& aPoint)
-			{
-				myOutResult.push_back(aPoint);
-			}
-			void operator()(const Line2& /**/)
-			{
-				CGAL_precondition(false);
-			}
-
-			std::vector<payload_type>& myOutResult;
-		};
-
 		template<typename T>
 		bool locAreItemsUnique(const std::vector<T>& someItems)
 		{
@@ -543,7 +527,7 @@ namespace SPGMT
 
 			data.mySegmentsCount.push_back(data.mySortedVertices.back().size() + 1 + data.mySegmentsCount.back());
 
-			data.myUniqueAndSortedVerticesX.reserve(allUniqueVertices.size());
+			data.myUniqueAndSortedVerticesX.resize(allUniqueVertices.size());
 			std::copy(allUniqueVertices.begin(), allUniqueVertices.end(), data.myUniqueAndSortedVerticesX.begin());
 
 			return data;
@@ -706,7 +690,7 @@ namespace SPGMT
 			// Found slab idx and it is not -inf
 			if (slabIdx > -1)
 			{
-				CGAL_precondition(partition.myUniqueXValues[slabIdx] <= projectedPoint.x());
+				CGAL_precondition(linesData.myUniqueAndSortedVerticesX[slabIdx] <= projectedPoint.x());
 				// Check if point is along vertical slab line
 				if (linesData.myUniqueAndSortedVerticesX[slabIdx] == projectedPoint.x())
 				{

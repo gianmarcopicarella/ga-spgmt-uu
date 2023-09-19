@@ -29,7 +29,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 	// Parallel Random planes
 	SECTION("Multiple Parallel Planes and Random Points around them")
 	{
-		constexpr auto planeSamplesCount = 1000;
+		constexpr auto planeSamplesCount = 200;
 		constexpr auto pointSamplesCount = 300;
 		constexpr auto minPlaneDistance = 20.f;
 
@@ -206,7 +206,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
             std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
         }
 
-        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 100000);
+        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
         std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
 
         const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);

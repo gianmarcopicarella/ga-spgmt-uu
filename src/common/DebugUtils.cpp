@@ -136,7 +136,6 @@ namespace SPGMT
 			CGAL::Random_points_in_cube_3<Point3> generator{ anHalfSide };
 			std::copy_n(generator, aSampleCount, std::back_inserter(samples));
 			// (NOT MANDATORY) Use a random permutation to hide the creation history of the point set.
-			// CGAL::cpp98::random_shuffle(samples.begin(), samples.end()); 
 			return samples;
 		}
 
@@ -209,6 +208,9 @@ namespace SPGMT
 			std::vector<Plane> parallelPlanes{ RandomPlaneSampling(1) };
 			CGAL::Random random;
 
+			CGAL_precondition(aMinPlaneDistance > 0.f);
+			CGAL_precondition(aMinPlaneDistance < aMaxPlaneDistance);
+
 			while (parallelPlanes.size() < aSampleCount)
 			{
 				const Point3 planePoint = parallelPlanes.back().point() + parallelPlanes.back().orthogonal_vector() *
@@ -216,17 +218,8 @@ namespace SPGMT
 
 				const Plane plane{ planePoint, parallelPlanes.back().orthogonal_vector() };
 
-				const auto isPlaneUnique = std::find_if(parallelPlanes.begin(), parallelPlanes.end(), [&plane](const auto& aPlane) {
-					return plane == aPlane;
-				}) == parallelPlanes.end();
-
-				if (isPlaneUnique)
-				{
-					parallelPlanes.push_back(plane);
-				}
+				parallelPlanes.push_back(plane);
 			}
-
-			CGAL::cpp98::random_shuffle(parallelPlanes.begin(), parallelPlanes.end());
 
 			return parallelPlanes;
 		}
@@ -240,9 +233,6 @@ namespace SPGMT
 			// Just to be sure there is room for a bit of plane height variety
 			// TODO: I will need to guarantee a minimum distance between parallel planes (if i use an inaccurate numeric representation)
 			CGAL_precondition((aMaxPlaneHeight - aMinPlaneHeight) >= aSampleCount);
-
-            //constexpr auto SEED = 10;
-            //CGAL::Random ran (SEED);
 
 			CGAL::Random_points_on_sphere_3<Vec3> generator{ radius, GetDefaultRandom() };
 			CGAL::Random random{ GetDefaultRandom() };
