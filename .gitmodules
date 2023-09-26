@@ -7,3 +7,9 @@
 [submodule "dep/eigen"]
 	path = dep/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "dep/corrade"]
+	path = dep/corrade
+	url = https://github.com/mosra/corrade.git
+[submodule "dep/magnum"]
+	path = dep/magnum
+	url = https://github.com/mosra/magnum.git
