@@ -391,35 +391,6 @@ int locFindVertexToInfinity(const std::vector<SPGMT::Vertex>& someVertices, cons
 	return -1;
 }
 
-void print_diagram(const Envelope_diagram_2& diag)
-{
-	// Go over all arrangement faces.
-	Envelope_diagram_2::Face_const_iterator            fit;
-	Envelope_diagram_2::Ccb_halfedge_const_circulator  ccb;
-	Envelope_diagram_2::Surface_const_iterator         sit;
-	for (fit = diag.faces_begin(); fit != diag.faces_end(); ++fit)
-	{
-		// Print the face boundary.
-		// Print the vertices along the outer boundary of the face.
-		ccb = fit->outer_ccb();
-		std::cout << "[Face]  ";
-		do
-		{
-			if (!ccb->is_fictitious())
-				std::cout << '(' << ccb->curve() << ") ";
-			++ccb;
-		} while (ccb != fit->outer_ccb());
-		// Print the planes that induce the envelope on this face.
-		std::cout << "-->  " << fit->number_of_surfaces()
-			<< " planes:";
-		for (sit = fit->surfaces_begin(); sit != fit->surfaces_end(); ++sit)
-			std::cout << ' ' << sit->plane();
-		std::cout << std::endl;
-	}
-	return;
-}
-
-
 void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someVertices, const std::vector<SPGMT::Plane>& somePlanes)
 {
 	using VertexIter = Envelope_diagram_2::Vertex_const_iterator;
@@ -427,8 +398,6 @@ void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someV
 	const auto& expectedResult = SPGMT::Debug::GetLowerEnvelopeOfPlanes(somePlanes);
 	CGAL_precondition(expectedResult.is_valid());
 	std::set<int> usedVerticesIndices;
-
-	print_diagram(expectedResult);
 
 	for (VertexIter it = expectedResult.vertices_begin(); it != expectedResult.vertices_end(); ++it)
 	{
