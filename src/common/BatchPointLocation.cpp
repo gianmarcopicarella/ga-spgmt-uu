@@ -1,45 +1,12 @@
 #include "BatchPointLocation.h"
+#include "../common/Utils.h"
 
 #include <vector>
-
-#include <CGAL/Search_traits_2.h>
-#include <CGAL/Search_traits_adapter.h>
-#include <CGAL/Orthogonal_k_neighbor_search.h>
-#include <CGAL/property_map.h>
-#include <boost/iterator/zip_iterator.hpp>
-#include <utility>
-
-
-typedef boost::tuple<SPGMT::Point2, int>                           Point_and_int;
-typedef CGAL::Search_traits_2<SPGMT::Kernel>                       Traits_base;
-typedef CGAL::Search_traits_adapter<Point_and_int,
-	CGAL::Nth_of_tuple_property_map<0, Point_and_int>,
-	Traits_base>                                              Traits;
-typedef CGAL::Orthogonal_k_neighbor_search<Traits>          K_neighbor_search;
-typedef K_neighbor_search::Tree                             Tree;
-typedef K_neighbor_search::Distance                         Distance;
-
 
 namespace SPGMT
 {
 	namespace
 	{
-		struct PlanePlaneVisitor
-		{
-			typedef Line3 payload_type;
-			typedef void result_type;
-			void operator()(const Line3& aLine)
-			{
-				myOutResult.push_back(aLine);
-			}
-			void operator()(const Plane& aPlane)
-			{
-				CGAL_precondition(false);
-			}
-
-			std::vector<payload_type>& myOutResult;
-		};
-
 		struct LineParallelLineVisitor
 		{
 			struct Data
@@ -51,7 +18,7 @@ namespace SPGMT
 			typedef void result_type;
 			void operator()(const Point2& aPoint)
 			{
-				static const FT zero{ 0 };
+				const FT zero{ 0 };
 				const Vec2 vecToPoint{ myLine.point(), aPoint };
 				const auto distanceSign = CGAL::scalar_product(vecToPoint, myLine.to_vector()) > zero ? 1.f : -1.f;
 				myOutResult.push_back({ distanceSign * vecToPoint.squared_length(), myPlaneIndex });
@@ -77,7 +44,7 @@ namespace SPGMT
 			typedef void result_type;
 			void operator()(const Point3& aPoint)
 			{
-				static const FT zero{ 0 };
+				const FT zero{ 0 };
 				const Vec3 vecToPoint{ myLine.point(), aPoint };
 				const auto distanceSign = CGAL::scalar_product(vecToPoint, myLine.to_vector()) > zero ? 1.f : -1.f;
 				myOutResult.push_back({ distanceSign * vecToPoint.squared_length(), myPlaneIndex });
@@ -92,93 +59,6 @@ namespace SPGMT
 			std::vector<payload_type>& myOutResult;
 		};
 
-		template<typename T>
-		bool locAreItemsUnique(const std::vector<T>& someItems)
-		{
-			auto areItemsUnique{ true };
-			for (int i = 0; i < someItems.size() && areItemsUnique; ++i)
-			{
-				for (int k = i + 1; k < someItems.size(); ++k)
-				{
-					if (someItems[i] == someItems[k])
-					{
-						areItemsUnique = false;
-						break;
-					}
-				}
-			}
-			return areItemsUnique;
-		}
-		bool locArePlanesNonVertical(const std::vector<Plane>& somePlanes)
-		{
-			static const Vec3 verticalAxis{ 0,1,0 };
-			static const FT zero{ 0 };
-			auto arePlanesNonVertical{ true };
-			for (int i = 0; i < somePlanes.size() && arePlanesNonVertical; ++i)
-			{
-				arePlanesNonVertical =
-					CGAL::scalar_product(somePlanes[i].orthogonal_vector(), verticalAxis) != zero;
-			}
-			return arePlanesNonVertical;
-		}
-		bool locArePlanesUniformlyOriented(const std::vector<Plane>& somePlanes)
-		{
-			static const Vec3 up{ 0, 1, 0 };
-			static const FT zero{ 0 };
-			auto isPointingDown{ false }, isPointingUp{ false };
-			for (auto& plane : somePlanes)
-			{
-				const auto dot = CGAL::scalar_product(up, plane.orthogonal_vector());
-				// Cannot handle vertical planes
-				CGAL_precondition(dot != zero);
-				isPointingUp |= dot > zero;
-				isPointingDown |= dot < zero;
-
-				if (isPointingUp && isPointingDown)
-				{
-					return false;
-				}
-			}
-			return true;
-		}
-		template <typename Strategy, typename T>
-		std::vector<typename Strategy::payload_type> locFindIntersections(const std::vector<T>& someItems, const bool aKeepOnlyUnique = false)
-		{
-			std::vector<typename Strategy::payload_type> result;
-			for (int i = 0; i < someItems.size(); ++i)
-			{
-				for (int k = i + 1; k < someItems.size(); ++k)
-				{
-					const auto intersection = CGAL::intersection(someItems[i], someItems[k]);
-					if (const auto* data = intersection.get_ptr())
-					{
-						Strategy visitor{ result };
-						data->apply_visitor(visitor);
-					}
-				}
-			}
-			if (aKeepOnlyUnique)
-			{
-				result.erase(std::unique(result.begin(), result.end(), CGAL::Equal_to<typename Strategy::payload_type,
-					typename Strategy::payload_type>()), result.end());
-			}
-			return result;
-		}
-		template <typename Strategy, typename T, typename K>
-		std::vector<typename Strategy::payload_type> locFindIntersections(const std::vector<T>& someItems, const K& anotherItem)
-		{
-			std::vector<typename Strategy::payload_type> result;
-			for (int i = 0; i < someItems.size(); ++i)
-			{
-				const auto intersection = CGAL::intersection(someItems[i], anotherItem);
-				if (const auto* data = intersection.get_ptr())
-				{
-					Strategy visitor{ anotherItem, i, result };
-					data->apply_visitor(visitor);
-				}
-			}
-			return result;
-		}
 		template<typename T>
 		void locSortByDistanceMember(std::vector<T>& someOutData)
 		{
@@ -197,7 +77,7 @@ namespace SPGMT
 		template <typename Strategy, typename T, typename K>
 		std::vector<int> locGetSortedItemsIndicesFromIntersections(const std::vector<T>& someItems, const K& anotherItem)
 		{
-			auto planesLineIntersections = locFindIntersections<Strategy>(someItems, anotherItem);
+			auto planesLineIntersections = Utils::FindIntersections<Strategy>(someItems, anotherItem);
 			locSortByDistanceMember(planesLineIntersections);
 			return locExtractIndicesMember(planesLineIntersections);
 		}
@@ -215,9 +95,9 @@ namespace SPGMT
 				return Line2{ aSecond, aFirst };
 			}
 		}
-		std::vector<Line2> locProjectOnXZPlane(const std::vector<Line3>& someLines)
+		std::vector<Line2> locProjectOnXYPlane(const std::vector<Line3>& someLines)
 		{
-			static const FT distance{ 1000.f };
+			const FT distance{ 1000.f };
 			std::vector<Line2> result;
 			for (const auto& line : someLines)
 			{
@@ -225,15 +105,15 @@ namespace SPGMT
 				const auto firstPoint{ line.point() };
 				const auto secondPoint{ firstPoint + translation };
 				const auto line2d = Create2DLine(
-					Point2{ firstPoint.x(), firstPoint.z() },
-					Point2{ secondPoint.x(), secondPoint.z() });
+					Point2{ firstPoint.x(), firstPoint.y() },
+					Point2{ secondPoint.x(), secondPoint.y() });
 				result.push_back(line2d);
 			}
 			return result;
 		}
-		std::vector<Line2> locProjectOnXZPlaneUnique(const std::vector<Line3>& someLines)
+		std::vector<Line2> locProjectOnXYPlaneUnique(const std::vector<Line3>& someLines)
 		{
-			auto result = locProjectOnXZPlane(someLines);
+			auto result = locProjectOnXYPlane(someLines);
 			result.erase(std::unique(result.begin(), result.end(),
 				CGAL::Equal_to<Line2, Line2>()), result.end());
 			return result;
@@ -410,7 +290,7 @@ namespace SPGMT
 				int myIndex{ -1 };
 				bool myIsVertex{ false };
 			};
-			LookupResult FindSegmentOrVertexIndex(const Point2& aPoint, int aLineIdx)
+			LookupResult FindSegmentOrVertexIndex(const Point2& aPoint, int aLineIdx) const
 			{
 				CGAL_precondition(myLines[aLineIdx].has_on(aPoint));
 				const auto& values = mySortedVertices[aLineIdx];
@@ -457,17 +337,17 @@ namespace SPGMT
 			}
 		};
 
-		struct PointIndexPair
-		{
-			Point2 myKey;
-			int myIndex{ -1 };
-		};
-
 		LineData locComputeLinesWrapper(const std::vector<Line3>& someLines)
 		{
+			struct PointIndexPair
+			{
+				Point2 myKey;
+				int myIndex{ -1 };
+			};
+
 			LineData data;
 
-			data.myLines = locProjectOnXZPlaneUnique(someLines);
+			data.myLines = locProjectOnXYPlaneUnique(someLines);
 			data.mySortedVertices.resize(data.myLines.size());
 
 			constexpr auto pointIndexPairCmp = [](auto& a, auto& b)
@@ -612,12 +492,12 @@ namespace SPGMT
 		}
 
 		// Requirements check
-		CGAL_precondition(locAreItemsUnique(somePlanes));
-		CGAL_precondition(locArePlanesNonVertical(somePlanes));
-		CGAL_precondition(locArePlanesUniformlyOriented(somePlanes));
+		CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
+		CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
 
 		// Compute plane-plane intersections
-		const auto lines3d = locFindIntersections<PlanePlaneVisitor>(somePlanes);
+		const auto lines3d = Utils::FindIntersections<Utils::PlanePlaneVisitor>(somePlanes);
 
 		// 1st edge case: single plane or parallel planes
 		if (lines3d.empty())
@@ -638,7 +518,7 @@ namespace SPGMT
 		}
 
 		// Compute lines data
-		auto linesData = locComputeLinesWrapper(lines3d);
+		const auto linesData = locComputeLinesWrapper(lines3d);
 
 		// 2nd edge case: single or parallel lines
 		if (linesData.myUniqueVerticesCount == 0)
@@ -648,7 +528,7 @@ namespace SPGMT
 			Result result;
 			for (const auto& queryPoint : somePoints)
 			{
-				const Point2 projectedPoint{ queryPoint.x(), queryPoint.z() };
+				const Point2 projectedPoint{ queryPoint.x(), queryPoint.y() };
 				const auto firstUpperLineIdx = BinarySearch<Line2, Point2>(linesData.myLines, sortedLinesIndices,
 					projectedPoint, 0, sortedLinesIndices.size());
 
@@ -660,7 +540,7 @@ namespace SPGMT
 				if (result.mySortedPlanesIndices.find(bucketIndex) == result.mySortedPlanesIndices.end())
 				{
 					const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
-						Line3{ queryPoint, Vec3{0,1,0} });
+						Line3{ queryPoint, Vec3{0,0,1} });
 					result.mySortedPlanesIndices.insert(std::make_pair(bucketIndex, sortedPlanesIndices));
 				}
 
@@ -683,7 +563,7 @@ namespace SPGMT
 
 		for (const auto& queryPoint : somePoints)
 		{
-			const Point2 projectedPoint{ queryPoint.x(), queryPoint.z() };
+			const Point2 projectedPoint{ queryPoint.x(), queryPoint.y() };
 			int slabIdx = FindSlabIndex(linesData.myUniqueAndSortedVerticesX, projectedPoint, 0, linesData.myUniqueAndSortedVerticesX.size());
 			int globalBucketIndex = -1;
 
@@ -745,7 +625,7 @@ namespace SPGMT
 			if (result.mySortedPlanesIndices.find(globalBucketIndex) == result.mySortedPlanesIndices.end())
 			{
 				const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
-					Line3{ queryPoint, Vec3{0,1,0} });
+					Line3{ queryPoint, Vec3{0,0,1} });
 				result.mySortedPlanesIndices.insert(std::make_pair(globalBucketIndex, sortedPlanesIndices));
 			}
 			else

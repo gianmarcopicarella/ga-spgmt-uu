@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_all.hpp>
 
 #include "../common/BatchPointLocation.h"
+#include "../common/BruteForce.h"
 #include "../common/DebugUtils.h"
 
 /*
@@ -51,14 +52,14 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 		// Check ranges
 		for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
 		{
-			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes" 
+			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
 			const int firstPlaneAboveIdx = result.myRangeWrappers[i].myRange.first;
 			const int rangeEnd = result.myRangeWrappers[i].myRange.second;
 
 			if (firstPlaneAboveIdx != -1)
 			{
 				// Check that all planes before are below the point and all planes in the range are above the point
-				for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
+				for (int k = 0; k < firstPlaneAboveIdx; ++k)
 				{
 					const int planeIdx = result.mySortedPlanesIndices.at(0)[k];
 					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
@@ -68,7 +69,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
 				{
 					const int planeIdx = result.mySortedPlanesIndices.at(0)[k];
-					const auto requirement = planes[planeIdx].has_on_negative_side(points[i]);
+					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
 					REQUIRE(requirement);
 				}
 			}
@@ -97,8 +98,8 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 
 			// run function
 			const auto result = SPGMT::BatchPointLocation({ plane }, points.mySamples);
-            REQUIRE(result.myRangeWrappers.size() == pointSamplesCount);
-            REQUIRE((result.mySortedPlanesIndices.size() == 1 && result.mySortedPlanesIndices.at(0).size() == planeSamplesCount));
+			REQUIRE(result.myRangeWrappers.size() == pointSamplesCount);
+			REQUIRE((result.mySortedPlanesIndices.size() == 1 && result.mySortedPlanesIndices.at(0).size() == planeSamplesCount));
 
 			// Check result
 			for (auto i = 0; i < pointSamplesCount; ++i)
@@ -115,158 +116,403 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 
 TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting plane intersections", "[BatchPointLocation]")
 {
-    SECTION("One horizontal plane and some random parallel planes intersecting it")
-    {
-        constexpr auto minPlaneDistance = 20.f;
-        constexpr auto planesCount = 68;
-        constexpr auto pointSamplesCount = 0;
-        constexpr auto specialPointSamplesCount = 10000;
-        constexpr auto allowSamplesOverPlane = true;
+	SECTION("One horizontal plane and some random parallel planes intersecting it")
+	{
+		constexpr auto minPlaneDistance = 20.f;
+		constexpr auto planesCount = 30;
+		constexpr auto pointSamplesCount = 0;
+		constexpr auto specialPointSamplesCount = 10000;
+		constexpr auto allowSamplesOverPlane = true;
 
-        auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
-        {
-            SPGMT::Plane horizontalPlane{ SPGMT::Point3{0,0,0}, SPGMT::Dir3{0,1,0} };
-            planes.push_back(horizontalPlane);
-        }
+		auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
+		{
+			SPGMT::Plane horizontalPlane{ SPGMT::Point3{0,0,0}, SPGMT::Dir3{0,0,1} };
+			planes.push_back(horizontalPlane);
+		}
 
-        std::vector<SPGMT::Point3> points;
+		std::vector<SPGMT::Point3> points;
 
-        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, specialPointSamplesCount * planesCount);
-        std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, specialPointSamplesCount * planesCount);
+		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
 
-        for (auto i = 0; i < planes.size(); ++i)
-        {
-            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
-                    pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
-            std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
-        }
+		for (auto i = 0; i < planes.size(); ++i)
+		{
+			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+		}
 
-        // run function
-        const auto result = SPGMT::BatchPointLocation(planes, points);
+		// run function
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
-        REQUIRE(result.myRangeWrappers.size() == points.size());
+		REQUIRE(result.myRangeWrappers.size() == points.size());
 
-        // Check ranges
-        for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
-        {
-            const auto& rangeWrapper = result.myRangeWrappers[i];
-            const auto& sortedPlanesIndices = result.mySortedPlanesIndices.at(rangeWrapper.myRefIndex);
+		// Check ranges
+		for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
+		{
+			const auto& rangeWrapper = result.myRangeWrappers[i];
+			const auto& sortedPlanesIndices = result.mySortedPlanesIndices.at(rangeWrapper.myRefIndex);
 
-            // This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
-            const int firstPlaneAboveIdx = rangeWrapper.myRange.first;
-            const int rangeEnd = rangeWrapper.myRange.second;
+			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
+			const int firstPlaneAboveIdx = rangeWrapper.myRange.first;
+			const int rangeEnd = rangeWrapper.myRange.second;
 
-            if (firstPlaneAboveIdx != planes.size())
-            {
-                // Check that all planes before are below the point and all planes in the range are above the point
-                for (int k = 0; k < firstPlaneAboveIdx - 1; ++k)
-                {
-                    const int planeIdx = sortedPlanesIndices[k];
-                    const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
-                    REQUIRE(requirement);
-                }
+			if (firstPlaneAboveIdx != planes.size())
+			{
+				// Check that all planes before are below the point and all planes in the range are above the point
+				for (int k = 0; k < firstPlaneAboveIdx; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
 
-                for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
-                {
-                    const int planeIdx = sortedPlanesIndices[k];
-                    const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]); // negative or on the plane
-                    REQUIRE(requirement);
-                }
-            }
-            else
-            {
-                // Check that all planes are below the point (here order and zone dont matter)
-                for (int k = 0; k < planes.size(); ++k)
-                {
-                    const auto requirement = planes[k].has_on_positive_side(points[i]);
-                    REQUIRE(requirement);
-                }
-            }
-        }
-    }
+				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]); // negative or on the plane
+					REQUIRE(requirement);
+				}
+			}
+			else
+			{
+				// Check that all planes are below the point (here order and zone dont matter)
+				for (int k = 0; k < planes.size(); ++k)
+				{
+					const auto requirement = planes[k].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+			}
+		}
+	}
 }
 
 TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 {
-    SECTION("random planes")
-    {
-        constexpr auto minPlaneDistance = 20.f;
-        constexpr auto planesCount = 20;
-        constexpr auto pointSamplesCount = 10000;
-        constexpr auto allowSamplesOverPlane = true;
-        
-        auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+	SECTION("random planes")
+	{
+		constexpr auto minPlaneDistance = 20.f;
+		constexpr auto planesCount = 30;
+		constexpr auto pointSamplesCount = 10000;
+		constexpr auto allowSamplesOverPlane = true;
 
-        std::vector<SPGMT::Point3> points;
+		auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
 
-        for (auto i = 0; i < planes.size(); ++i)
-        {
-            const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
-                    pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
-            std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
-        }
+		std::vector<SPGMT::Point3> points;
 
-        const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
-        std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		for (auto i = 0; i < planes.size(); ++i)
+		{
+			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+		}
 
-        const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
-        std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
+		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
+		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
 
-        // run function
-        const auto result = SPGMT::BatchPointLocation(planes, points);
+		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
+		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
 
-        REQUIRE(result.myRangeWrappers.size() == points.size());
+		// run function
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
-        // Check ranges
-        for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
-        {
-            const auto& zoneRange = result.myRangeWrappers[i];
-            const auto& sortedPlanesIndices =
-                    result.mySortedPlanesIndices.at(zoneRange.myRefIndex);
+		REQUIRE(result.myRangeWrappers.size() == points.size());
 
-            // This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
-            const int firstPlaneAboveIdx = zoneRange.myRange.first;
-            const int rangeEnd = zoneRange.myRange.second;
+		// Check ranges
+		for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
+		{
+			const auto& zoneRange = result.myRangeWrappers[i];
+			const auto& sortedPlanesIndices =
+				result.mySortedPlanesIndices.at(zoneRange.myRefIndex);
 
-            if (firstPlaneAboveIdx != planes.size())
-            {
-                // Check that all planes before are below the point and all planes in the range are above the point
-                for (int k = 0; k < firstPlaneAboveIdx; ++k)
-                {
-                    const int planeIdx = sortedPlanesIndices[k];
-                    const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
-                    if (!requirement)
-                    {
-                        std::cout << "stop" << std::endl;
-                    }
-                    REQUIRE(requirement);
-                }
+			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
+			const int firstPlaneAboveIdx = zoneRange.myRange.first;
+			const int rangeEnd = zoneRange.myRange.second;
 
-                for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
-                {
-                    const int planeIdx = sortedPlanesIndices[k];
-                    const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
-                    if (!requirement)
-                    {
-                        std::cout << "stop" << std::endl;
-                    }
-                    REQUIRE(requirement);
-                }
-            }
-            else
-            {
-                // Check that all planes are below the point (here order and zone dont matter)
-                for (int k = 0; k < planes.size(); ++k)
-                {
-                    const auto requirement = planes[k].has_on_positive_side(points[i]);
-                    if (!requirement)
-                    {
-                        std::cout << "stop" << std::endl;
-                    }
-                    REQUIRE(requirement);
-                }
-            }
-        }
+			if (firstPlaneAboveIdx != planes.size())
+			{
+				// Check that all planes before are below the point and all planes in the range are above the point
+				for (int k = 0; k < firstPlaneAboveIdx; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
 
-    }
+				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+			}
+			else
+			{
+				// Check that all planes are below the point (here order and zone dont matter)
+				for (int k = 0; k < planes.size(); ++k)
+				{
+					const auto requirement = planes[k].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+			}
+		}
+
+	}
+}
+
+SPGMT::Vec3 locNormalize(const SPGMT::Vec3& aVec)
+{
+	auto const slen = aVec.squared_length();
+	auto const d = CGAL::sqrt(slen);
+	return aVec / d;
+}
+SPGMT::Vec2 locNormalize(const SPGMT::Vec2& aVec)
+{
+	auto const slen = aVec.squared_length();
+	auto const d = CGAL::sqrt(slen);
+	return aVec / d;
+}
+
+TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
+{
+	SECTION("100 random, non-vertical parallel planes")
+	{
+		constexpr auto planesCount = 100;
+		const auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount);
+
+		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+
+		REQUIRE((
+			result.size() == 1 &&
+			result[0].myType == SPGMT::VertexType::INFINITE &&
+			result[0].myLowestLeftPlanes.size() == 1));
+
+		const auto resultPlaneIdx = result[0].myLowestLeftPlanes[0];
+		for (int i = 0; i < planes.size(); ++i)
+		{
+			const auto requirement = !planes[i].has_on_positive_side(planes[resultPlaneIdx].point());
+			REQUIRE(requirement);
+		}
+	}
+
+	SECTION("100 random, non-vertical parallel planes and one horizontal plane")
+	{
+		using namespace SPGMT;
+
+		constexpr auto planesCount = 100;
+		auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount);
+		{
+			SPGMT::Plane horizontalPlane{ SPGMT::Point3{0,0,0}, SPGMT::Dir3{0,0,1} };
+			planes.push_back(horizontalPlane);
+		}
+
+		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+
+		REQUIRE((result.size() == 2 &&
+			result[0].myType == SPGMT::VertexType::INFINITE &&
+			result[1].myType == SPGMT::VertexType::INFINITE &&
+			result[0].mySortedNeighboursIndices.size() == 1 &&
+			result[1].mySortedNeighboursIndices.size() == 1));
+
+		for (int i = 0; i < result.size(); ++i)
+		{
+			const Vec3 lineSegment{ result[i].myPoint, result[result[i].mySortedNeighboursIndices[0]].myPoint };
+			const Vec3 normSegment = locNormalize(lineSegment);
+			const Vec3 up{ 0,0,1 };
+			const Vec3 left = CGAL::cross_product(normSegment, up);
+			const Point3 sample = result[i].myPoint + left * 50.f;
+			const Line3 rayLine{ sample, up };
+
+			std::vector<std::pair<FT, int>> zPlanes;
+
+			for (int j = 0; j < planes.size(); ++j)
+			{
+				const auto intersection = CGAL::intersection(rayLine, planes[j]);
+				CGAL_precondition(intersection.has_value());
+				zPlanes.push_back(std::make_pair(boost::get<Point3>(&*intersection)->z(), j));
+			}
+
+			const auto lowestPlaneIdx = result[i].myLowestLeftPlanes[0];
+
+			std::sort(zPlanes.begin(), zPlanes.end(), [](auto& a, auto& b) {return a.first < b.first; });
+			REQUIRE(zPlanes[0].second == lowestPlaneIdx);
+		}
+	}
+}
+
+SPGMT::Point2 locProjectXY(const SPGMT::Point3& aPoint)
+{
+	return SPGMT::Point2{ aPoint.x(), aPoint.y() };
+}
+
+int locFindVertex(const std::vector<SPGMT::Vertex>& someVertices, const SPGMT::Point2& aPoint, const SPGMT::VertexType aVertexType)
+{
+	const auto matchIt = std::find_if(someVertices.begin(), someVertices.end(), [&aPoint, aVertexType](const auto& aVertex) {
+		return aVertex.myType == aVertexType && locProjectXY(aVertex.myPoint) == aPoint;
+		});
+
+	if (matchIt != someVertices.end())
+	{
+		return std::distance(someVertices.begin(), matchIt);
+	}
+
+	return -1;
+}
+int locFindVertex(const std::vector<SPGMT::Vertex>& someVertices, const std::vector<int>& someIndices, const SPGMT::Point2& aPoint, const SPGMT::VertexType aVertexType)
+{
+	for (int i = 0; i < someIndices.size(); ++i)
+	{
+		if (someVertices[someIndices[i]].myType == aVertexType)
+		{
+			const auto& projection = locProjectXY(someVertices[someIndices[i]].myPoint);
+			if (aPoint == projection)
+			{
+				return someIndices[i];
+			}
+		}
+	}
+
+	return -1;
+}
+int locFindVertexToInfinity(const std::vector<SPGMT::Vertex>& someVertices, const std::vector<int>& someIndices, const SPGMT::Ray2& aRay)
+{
+	for (int i = 0; i < someIndices.size(); ++i)
+	{
+		if (someVertices[someIndices[i]].myType == SPGMT::VertexType::INFINITE)
+		{
+			const auto& projection = locProjectXY(someVertices[someIndices[i]].myPoint);
+			if (aRay.has_on(projection))
+			{
+				return someIndices[i];
+			}
+		}
+	}
+
+	return -1;
+}
+
+void print_diagram(const Envelope_diagram_2& diag)
+{
+	// Go over all arrangement faces.
+	Envelope_diagram_2::Face_const_iterator            fit;
+	Envelope_diagram_2::Ccb_halfedge_const_circulator  ccb;
+	Envelope_diagram_2::Surface_const_iterator         sit;
+	for (fit = diag.faces_begin(); fit != diag.faces_end(); ++fit)
+	{
+		// Print the face boundary.
+		// Print the vertices along the outer boundary of the face.
+		ccb = fit->outer_ccb();
+		std::cout << "[Face]  ";
+		do
+		{
+			if (!ccb->is_fictitious())
+				std::cout << '(' << ccb->curve() << ") ";
+			++ccb;
+		} while (ccb != fit->outer_ccb());
+		// Print the planes that induce the envelope on this face.
+		std::cout << "-->  " << fit->number_of_surfaces()
+			<< " planes:";
+		for (sit = fit->surfaces_begin(); sit != fit->surfaces_end(); ++sit)
+			std::cout << ' ' << sit->plane();
+		std::cout << std::endl;
+	}
+	return;
+}
+
+
+void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someVertices, const std::vector<SPGMT::Plane>& somePlanes)
+{
+	using VertexIter = Envelope_diagram_2::Vertex_const_iterator;
+	using HalfEdgeCwIter = typename Envelope_diagram_2::Halfedge_around_vertex_const_circulator;
+	const auto& expectedResult = SPGMT::Debug::GetLowerEnvelopeOfPlanes(somePlanes);
+	CGAL_precondition(expectedResult.is_valid());
+	std::set<int> usedVerticesIndices;
+
+	print_diagram(expectedResult);
+
+	for (VertexIter it = expectedResult.vertices_begin(); it != expectedResult.vertices_end(); ++it)
+	{
+		const auto currentIndex = locFindVertex(someVertices, it->point(), SPGMT::VertexType::FINITE);
+		REQUIRE(currentIndex != -1);
+		REQUIRE(usedVerticesIndices.find(currentIndex) == usedVerticesIndices.end());
+		usedVerticesIndices.insert(currentIndex);
+
+		const auto& currentVertexXY = locProjectXY(someVertices[currentIndex].myPoint);
+		HalfEdgeCwIter neighbourIt = it->incident_halfedges();
+		std::set<int> usedNeighbourVerticesIndices;
+
+		do
+		{
+			const auto& halfEdgeCurve = neighbourIt->ccb()->curve();
+			if (halfEdgeCurve.is_segment())
+			{
+				const auto& segment = halfEdgeCurve.segment();
+				const auto& pointToFind = currentVertexXY == segment.source() ? segment.target() : segment.source();
+				const auto targetIdx = locFindVertex(someVertices, someVertices[currentIndex].mySortedNeighboursIndices,
+					pointToFind, SPGMT::VertexType::FINITE);
+				REQUIRE(targetIdx != -1);
+				REQUIRE(usedNeighbourVerticesIndices.find(targetIdx) == usedNeighbourVerticesIndices.end());
+				usedNeighbourVerticesIndices.insert(targetIdx);
+
+			}
+			else if (halfEdgeCurve.is_ray())
+			{
+				const auto& ray = halfEdgeCurve.ray();
+				CGAL_precondition(ray.source() == currentVertexXY);
+				const int infinityIdx = locFindVertexToInfinity(someVertices, someVertices[currentIndex].mySortedNeighboursIndices, ray);
+				REQUIRE(infinityIdx != -1);
+				REQUIRE(usedNeighbourVerticesIndices.find(infinityIdx) == usedNeighbourVerticesIndices.end());
+				usedNeighbourVerticesIndices.insert(infinityIdx);
+			}
+			else
+			{
+				CGAL_precondition(false);
+			}
+		} while (++neighbourIt != it->incident_halfedges());
+
+		// All vertex neighbours must be explored
+		REQUIRE(usedNeighbourVerticesIndices.size() == someVertices[currentIndex].mySortedNeighboursIndices.size());
+	}
+
+	// Check that every finite vertex in my result has been visited
+	const auto finiteVerticesCounter = std::count_if(someVertices.begin(), someVertices.end(),
+		[](const auto& aVertex) {return aVertex.myType == SPGMT::VertexType::FINITE; });
+	REQUIRE(finiteVerticesCounter == usedVerticesIndices.size());
+
+	// Check that every face has picked the lowest plane
+	std::set<int> lowestPlanesIndices;
+	std::for_each(someVertices.begin(), someVertices.end(), [&lowestPlanesIndices](const auto& aVertex) {
+		lowestPlanesIndices.insert(aVertex.myLowestLeftPlanes.begin(), aVertex.myLowestLeftPlanes.end());
+	});
+	REQUIRE(lowestPlanesIndices.size() == expectedResult.number_of_faces());
+	//for (auto faceIter = expectedResult.faces_begin(); faceIter != expectedResult.faces_end(); ++faceIter)
+	//{
+	//	const auto planeIter = faceIter->outer_ccb()->surfaces_begin();
+	//	const auto planeIterEnd = faceIter->outer_ccb()->surfaces_end();
+	//	const auto planesCount = std::distance(planeIter, planeIterEnd);
+	//	REQUIRE(planesCount == 1);
+
+	//	for (const auto& planeIdx : lowestPlanesIndices)
+	//	{
+	//		// Check that a plane exists
+	//		// TODO: Check face by face and not globally to ensure the set of picked plane indices is correct for each face
+	//	}
+	//}
+}
+
+
+
+
+TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope]")
+{
+	SECTION("10 random dual planes")
+	{
+		using namespace SPGMT;
+		constexpr auto planesCount = 50;
+		constexpr auto halfSide = 50.f;
+		const auto& points = SPGMT::Debug::Uniform3DCubeSampling(halfSide, planesCount);
+		const auto& planes = SPGMT::Debug::GetDualPlanes(points);
+		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+		locIsLowerEnvelopeProjectionCorrect(result, planes);
+	}
 }

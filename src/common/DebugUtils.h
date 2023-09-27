@@ -2,7 +2,16 @@
 
 #include "Types.h"
 #include <fstream>
+#include "BruteForce.h"
 
+// includes for defining the lower envelope
+#include <CGAL/Env_plane_traits_3.h>
+#include <CGAL/envelope_3.h>
+
+// typedefs for defining the lower envelope
+typedef CGAL::Env_plane_traits_3<SPGMT::Kernel>          Traits_3;
+typedef Traits_3::Surface_3                              Surface_3;
+typedef CGAL::Envelope_diagram_2<Traits_3>               Envelope_diagram_2;
 
 namespace SPGMT
 {
@@ -13,6 +22,8 @@ namespace SPGMT
 			std::vector<Point3> mySamples;
 			int myPositiveCount{ 0 }, myNegativeCount{ 0 }, myOverSurfaceCount{ 0 };
 		};
+		Envelope_diagram_2 GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes);
+		std::vector<Plane> GetDualPlanes(const std::vector<Point3>& somePoints);
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount);
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount);
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount);

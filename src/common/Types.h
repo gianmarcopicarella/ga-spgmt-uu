@@ -1,6 +1,7 @@
 #pragma once
 
-#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+//#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+#include <CGAL/Exact_predicates_exact_constructions_kernel_with_sqrt.h>
 #include <CGAL/Point_set_3.h>
 #include <CGAL/Point_3.h>
 #include <CGAL/Point_2.h>
@@ -11,6 +12,9 @@
 #include <CGAL/Direction_2.h>
 #include <CGAL/Vector_3.h>
 #include <CGAL/Vector_2.h>
+#include <CGAL/Segment_3.h>
+#include <CGAL/Ray_2.h>
+#include <CGAL/Sphere_3.h>
 
 // Only for debug
 //#include <CGAL/Simple_cartesian.h>
@@ -31,7 +35,8 @@ namespace SPGMT
     typedef Kernel::Point_2 Point2;
     typedef Kernel::Vector_2 Vec2;*/
 
-    typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
+    typedef CGAL::Exact_predicates_exact_constructions_kernel_with_sqrt Kernel;
+    //typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
     typedef Kernel::FT 	FT;
     typedef Kernel::Point_3 Point3;
     typedef CGAL::Point_set_3<Point3> PointSet3;
@@ -43,4 +48,7 @@ namespace SPGMT
     typedef Kernel::Point_2 Point2;
     typedef Kernel::Vector_2 Vec2;
     typedef Kernel::Direction_2 Dir2;
+    typedef CGAL::Segment_3<Kernel> Segment3;
+    typedef Kernel::Ray_2 Ray2;
+    typedef Kernel::Sphere_3 Sphere3;
 }

@@ -1,10 +1,6 @@
 #include "BruteForce.h"
 #include "Utils.h"
 
-#include <CGAL/bounding_box.h>
-#include <CGAL/Bbox_3.h>
-#include <CGAL/centroid.h>
-
 namespace SPGMT
 {
 	namespace
@@ -28,87 +24,75 @@ namespace SPGMT
 		}
 		bool locArePlanesNonVertical(const std::vector<Plane>& somePlanes)
 		{
-			const Vec3 verticalAxis{ 0,1,0 };
+			const Vec3 up{ 0,0,1 };
 			const FT zero{ 0 };
 			auto arePlanesNonVertical{ true };
 			for (int i = 0; i < somePlanes.size() && arePlanesNonVertical; ++i)
 			{
 				arePlanesNonVertical =
-					CGAL::scalar_product(somePlanes[i].orthogonal_vector(), verticalAxis) != zero;
+					CGAL::scalar_product(somePlanes[i].orthogonal_vector(), up) != zero;
 			}
 			return arePlanesNonVertical;
 		}
 		bool locArePlanesUniformlyOrientedUp(const std::vector<Plane>& somePlanes)
 		{
-			const Vec3 up{ 0, 1, 0 };
+			const Vec3 up{ 0, 0, 1 };
 			const FT zero{ 0 };
-			auto isPointingDown{ false }, isPointingUp{ false };
+			auto isPointingUp{ false };
 			for (auto& plane : somePlanes)
 			{
 				const auto dot = CGAL::scalar_product(up, plane.orthogonal_vector());
 				// Cannot handle vertical planes
 				CGAL_precondition(dot != zero);
 				isPointingUp |= dot > zero;
-				isPointingDown |= dot < zero;
-
-				if (isPointingUp && isPointingDown)
-				{
-					return false;
-				}
 			}
-
-			if (!isPointingUp)
-			{
-				return false;
-			}
-
-			return true;
+			return isPointingUp;
 		}
-
 		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes)
 		{
-			if (somePlanes.empty())
-			{
-				return -1;
-			}
+			CGAL_precondition(somePlanes.size() > 0);
 			const Line3 upLine{ Point3{0,0,0}, Vec3{0,0,1} };
-			std::vector<std::pair<FT, int>> planeDepths;
-			for (int i = 0; i < somePlanes.size(); ++i)
+			// Initialize minimum z with the first plane
+			FT minZ;
+			int lowestPlaneIdx = 0;
+			{
+				const auto intersection = CGAL::intersection(upLine, somePlanes.front());
+				CGAL_precondition(intersection.has_value());
+				const Point3* point = boost::get<Point3>(&*intersection);
+				CGAL_precondition(point != nullptr);
+				minZ = point->z();
+			}
+			// Check all the remaining planes' z values
+			for (int i = 1; i < somePlanes.size(); ++i)
 			{
 				const auto intersection = CGAL::intersection(upLine, somePlanes[i]);
 				CGAL_precondition(intersection.has_value());
 				const Point3* point = boost::get<Point3>(&*intersection);
 				CGAL_precondition(point != nullptr);
-				planeDepths.push_back(std::make_pair(point->z(), i));
+				if (point->z() < minZ)
+				{
+					minZ = point->z();
+					lowestPlaneIdx = i;
+				}
 			}
-			return CGAL::min_max_element(planeDepths.begin(), planeDepths.end()).first->second;
+			return lowestPlaneIdx;
 		}
 		bool locIsVertexInLowerEnvelope(const std::vector<Plane>& somePlanes, const Point3& aPoint)
 		{
-			auto isValid{ true };
-
-			std::vector<FT> zs;
-			zs.push_back(aPoint.z());
-			std::cout << "--Y: " << zs.back() << std::endl;
-			for (int i = 0; i < somePlanes.size() && isValid; ++i)
+			const Line3 upLine { aPoint, Vec3{0,0,1} };
+			FT minZ = aPoint.z();
+			for (int i = 0; i < somePlanes.size(); ++i)
 			{
-				const auto inter = CGAL::intersection(somePlanes[i], Line3{ aPoint, Vec3{0,0,1} });
-				
+				const auto inter = CGAL::intersection(somePlanes[i], upLine);
 				CGAL_precondition(inter.has_value());
 				const Point3* point = boost::get<Point3>(&*inter);
 				CGAL_precondition(point != nullptr);
-				//planeDepths.push_back(std::make_pair(point->y(), i));
-				zs.push_back(point->z());
-				/*if (somePlanes[i].has_on_positive_side(aPoint))
+				if (point->z() < minZ)
 				{
-					isValid = false;
-				}*/
-				std::cout << "Y: " << zs.back() << std::endl;
+					return false;
+				}
 			}
-
-			isValid = *CGAL::min_max_element(zs.begin(), zs.end()).first == aPoint.z();
-
-			return isValid;
+			return true;
 		}
 
 		struct LineData
@@ -134,7 +118,7 @@ namespace SPGMT
 		{
 			const auto lineIter = std::find_if(someLines.begin(), someLines.end(), [&aLine](const auto& aLineData) {
 				return aLine == aLineData.myLine;
-			});
+				});
 
 			if (lineIter == someLines.end())
 			{
@@ -227,7 +211,7 @@ namespace SPGMT
 				const auto targetVertexIdx = anOutVertex.mySortedNeighboursIndices[i];
 
 				const Vec3 segment{ anOutVertex.myPoint, someVertices[targetVertexIdx].myPoint };
-				const auto angleDegrees = CGAL::approximate_angle(Vec3{ 1,0,0 }, segment);
+				const auto angleDegrees = CGAL::approximate_angle(Vec3{ 0,0,1 }, segment);
 
 				wrappers.push_back(InternalWrapper{ angleDegrees, targetVertexIdx, lowestPlaneIdx });
 			}
@@ -246,9 +230,9 @@ namespace SPGMT
 		}
 
 		// Visual Help. https://www.falstad.com/dotproduct/
-		int locLowestPlaneIndexThroughSegment(const Point3& aStart, const Point3& anEnd, const std::vector<Plane>& somePlanes, const std::vector<int>& somePlanesIndices)
+		std::pair<int, int> locMinMaxSteepPlaneIndexThroughSegment(const Point3& aStart, const Point3& anEnd, const std::vector<Plane>& somePlanes, const std::vector<int>& somePlanesIndices)
 		{
-			const Vec3 upDir{ 0,1,0 };
+			const Vec3 upDir{ 0,0,1 };
 
 			CGAL_precondition(somePlanes.size() > 0);
 			CGAL_precondition(somePlanesIndices.size() > 0);
@@ -258,66 +242,44 @@ namespace SPGMT
 
 			const Vec3 leftDir{ CGAL::cross_product(segmentDir, upDir) };
 
-			FT maxSteepness = CGAL::scalar_product(somePlanes[somePlanesIndices[0]].orthogonal_vector(), leftDir);
-			int planeIdx = somePlanesIndices[0];
+			FT maxSteep = CGAL::scalar_product(somePlanes[somePlanesIndices[0]].orthogonal_vector(), leftDir);
+			FT minSteep = maxSteep;
+			auto maxPlaneIdx = somePlanesIndices[0];
+			auto minPlaneIdx = maxPlaneIdx;
 
 			for (int i = 1; i < somePlanesIndices.size(); ++i)
 			{
 				const auto currentPlaneIdx = somePlanesIndices[i];
 				const auto dot = CGAL::scalar_product(somePlanes[currentPlaneIdx].orthogonal_vector(), leftDir);
 
-				if (dot > maxSteepness)
+				if (dot > maxSteep)
 				{
-					maxSteepness = dot;
-					planeIdx = currentPlaneIdx;
+					maxSteep = dot;
+					maxPlaneIdx = currentPlaneIdx;
+				}
+				else if (dot < minSteep)
+				{
+					minSteep = dot;
+					minPlaneIdx = currentPlaneIdx;
 				}
 			}
 
-			return planeIdx;
+			return std::make_pair(minPlaneIdx, maxPlaneIdx);
 		}
-
-		CGAL::Bbox_3 ComputeBBox(const std::vector<Point3>& somePoints, const FT aPadding = 0.f)
-		{
-			std::vector<Point3> copy{ somePoints };
-			const auto minMaxPair = CGAL::min_max_element(somePoints.begin(), somePoints.end());
-			copy.push_back(Point3{
-				minMaxPair.first->x() - aPadding,
-				minMaxPair.first->y() - aPadding,
-				minMaxPair.first->z() - aPadding });
-			copy.push_back(Point3{
-				minMaxPair.second->x() + aPadding,
-				minMaxPair.second->y() + aPadding,
-				minMaxPair.second->z() + aPadding });
-			return CGAL::bbox_3(copy.begin(), copy.end());
-		}
-		Sphere3 ComputeBoundingSphere(const std::vector<Point3>& somePoints, const FT aPadding = 0.f)
-		{
-			CGAL_precondition(somePoints.size() > 0);
-			const auto& sphereOrigin = CGAL::centroid(somePoints.begin(), somePoints.end());
-			std::vector<FT> distances;
-			distances.reserve(somePoints.size());
-			const auto transform = [&sphereOrigin](const auto& aPoint) { return CGAL::squared_distance(aPoint, sphereOrigin); };
-			std::transform(somePoints.begin(), somePoints.end(), std::back_inserter(distances), transform);
-			const auto& minMaxDistances = CGAL::min_max_element(distances.begin(), distances.end());
-			const auto sphereRadius = *minMaxDistances.second + aPadding;
-			return Sphere3(sphereOrigin, sphereRadius);
-		}
-
-		Vec3 locGetLineDirection(const LineData& aLineData)
+		Vec3 locGetUniformLineVector(const LineData& aLineData)
 		{
 			constexpr auto distance = 1000.f;
 			const auto& a = aLineData.myLine.point();
 			const auto& b = a + aLineData.myLine.to_vector() * distance;
 			if (a < b)
 			{
-				return locNormalize(Vec3{ a, b });
+				return Vec3{ a, b };
 			}
 			else
 			{
-				return locNormalize(Vec3{ b, a });
+				return Vec3{ b, a };
 			}
 		}
-
 	}
 
 	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
@@ -367,8 +329,11 @@ namespace SPGMT
 					end.mySortedNeighboursIndices.push_back(0);
 					end.myType = VertexType::INFINITE;
 
-					start.myLowestLeftPlanes.push_back(locLowestPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLineData.myPlanesIndices));
-					end.myLowestLeftPlanes.push_back(locLowestPlaneIndexThroughSegment(end.myPoint, start.myPoint, somePlanes, currentLineData.myPlanesIndices));
+					const auto minMaxPlaneIndices =
+						locMinMaxSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLineData.myPlanesIndices);
+
+					start.myLowestLeftPlanes.push_back(minMaxPlaneIndices.second);
+					end.myLowestLeftPlanes.push_back(minMaxPlaneIndices.first);
 
 					result.push_back(start);
 					result.push_back(end);
@@ -387,13 +352,13 @@ namespace SPGMT
 			CGAL_precondition(!vertexIndices.empty());
 			std::sort(vertexIndices.begin(), vertexIndices.end(), [&linesVerticesData](auto& a, auto& b) {
 				return linesVerticesData.myUniqueVertices[a].myPoint < linesVerticesData.myUniqueVertices[b].myPoint;
-			});
+				});
 
 			// Add two custom vertices at each edge of the line representing +/- infinity
-			constexpr auto distance = 1000.f;
-			const auto& uniformLineDirection = locGetLineDirection(currentLine);
-			const auto& positive = linesVerticesData.myUniqueVertices[vertexIndices.back()].myPoint + uniformLineDirection * distance;
-			const auto& negative = linesVerticesData.myUniqueVertices[vertexIndices.front()].myPoint - uniformLineDirection * distance;
+			constexpr auto offset = 1000.f;
+			const auto& uniformLineVector = locGetUniformLineVector(currentLine);
+			const auto& positive = linesVerticesData.myUniqueVertices[vertexIndices.back()].myPoint + uniformLineVector * offset;
+			const auto& negative = linesVerticesData.myUniqueVertices[vertexIndices.front()].myPoint - uniformLineVector * offset;
 
 			CGAL_precondition(currentLine.myLine.has_on(positive));
 			CGAL_precondition(currentLine.myLine.has_on(negative));
@@ -423,9 +388,6 @@ namespace SPGMT
 				const auto& endVertex = linesVerticesData.myUniqueVertices[endIdx];
 				const auto& midpoint = CGAL::midpoint(startVertex.myPoint, endVertex.myPoint);
 				CGAL_precondition(currentLine.myLine.has_on(midpoint));
-
-				std::cout << "Segment: " << startVertex.myPoint << "  -  " << endVertex.myPoint << " | midpoint: " << midpoint << std::endl;
-
 				const auto isSegmentGood = locIsVertexInLowerEnvelope(somePlanes, midpoint);
 
 				if (isSegmentGood && segmentStartIdx == -1)
@@ -463,25 +425,17 @@ namespace SPGMT
 						result.push_back(end);
 					}
 
-					if (!endVertex.myIsAtInfinity && !startVertex.myIsAtInfinity)
-					{
-						std::cout << "aaa" << std::endl;
-					}
-
-					
-
 					auto& start = result[startIter->myIndex];
 					auto& end = result[endIter->myIndex];
 
-					std::cout << start.myPoint << "  --  " << end.myPoint << std::endl;
+					const auto minMaxPlaneIndices = locMinMaxSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint,
+						somePlanes, currentLine.myPlanesIndices);
 
 					start.mySortedNeighboursIndices.push_back(endIter->myIndex);
-					start.myLowestLeftPlanes.push_back(locLowestPlaneIndexThroughSegment(start.myPoint, end.myPoint, 
-						somePlanes, currentLine.myPlanesIndices));
+					start.myLowestLeftPlanes.push_back(minMaxPlaneIndices.second);
 
 					end.mySortedNeighboursIndices.push_back(startIter->myIndex);
-					end.myLowestLeftPlanes.push_back(locLowestPlaneIndexThroughSegment(end.myPoint, start.myPoint, 
-						somePlanes, currentLine.myPlanesIndices));
+					end.myLowestLeftPlanes.push_back(minMaxPlaneIndices.first);
 
 					segmentStartIdx = -1;
 				}
@@ -491,7 +445,7 @@ namespace SPGMT
 		// Sort each edge counter-clock wise
 		for (int i = 0; i < result.size(); ++i)
 		{
-			//locSortClockWise(result[i], result);
+			locSortClockWise(result[i], result);
 
 			// Set vertex to infinity if it has only one edge
 			if (result[i].mySortedNeighboursIndices.size() == 1)
