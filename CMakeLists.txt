@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 
 # dependencies
 add_subdirectory(dep/Catch2)
-add_subdirectory(dep/eigen)
 
 # main project
 add_subdirectory(src)
