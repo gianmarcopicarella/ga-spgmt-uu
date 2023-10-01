@@ -3,3 +3,4 @@ build/*
 .idea/*
 cmake-build-release/*
 cmake-build-debug/*
+pcdep/SDL2-2.0.10/*

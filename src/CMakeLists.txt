@@ -1,6 +1,9 @@
 set(CGAL_DATA_DIR ${PROJECT_SOURCE_DIR}/data)
 
 find_package(CGAL REQUIRED)
+
+find_package(Magnum REQUIRED GL Sdl2Application)
+
 # find_package (Eigen3 3.1.0 QUIET NO_MODULE)
 # include(CGAL_Eigen3_support)
 
@@ -49,8 +52,8 @@ target_link_libraries(main ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} )
 target_link_libraries(tests ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} )
 endif()
 
-target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data)
-target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::Data)
+target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data Magnum::Application Magnum::GL Magnum::Magnum)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::Data Magnum::Application Magnum::GL Magnum::Magnum)
 
 # if(IPE_FOUND)
 # foreach(IPELET_PATH ${IPELETS_ALL})
