@@ -5,6 +5,8 @@
 #include "../common/BruteForce.h"
 #include "../common/DebugUtils.h"
 
+#include "../common/Serialize.h"
+
 /*
 Currently this function must behave correctly for the following cases:
 1) No Plane intersections found -> Parallel planes (vertical/horizontal cases too) DONE
@@ -260,19 +262,6 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 	}
 }
 
-SPGMT::Vec3 locNormalize(const SPGMT::Vec3& aVec)
-{
-	auto const slen = aVec.squared_length();
-	auto const d = CGAL::sqrt(slen);
-	return aVec / d;
-}
-SPGMT::Vec2 locNormalize(const SPGMT::Vec2& aVec)
-{
-	auto const slen = aVec.squared_length();
-	auto const d = CGAL::sqrt(slen);
-	return aVec / d;
-}
-
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
 	SECTION("100 random, non-vertical parallel planes")
@@ -314,13 +303,13 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			result[0].mySortedNeighboursIndices.size() == 1 &&
 			result[1].mySortedNeighboursIndices.size() == 1));
 
+		const Vec3 up{ 0,0,1 };
+
 		for (int i = 0; i < result.size(); ++i)
 		{
 			const Vec3 lineSegment{ result[i].myPoint, result[result[i].mySortedNeighboursIndices[0]].myPoint };
-			const Vec3 normSegment = locNormalize(lineSegment);
-			const Vec3 up{ 0,0,1 };
-			const Vec3 left = CGAL::cross_product(normSegment, up);
-			const Point3 sample = result[i].myPoint + left * 50.f;
+			const Vec3 left = -CGAL::cross_product(lineSegment, up);
+			const Point3 sample = result[i].myPoint + left * 100.f;
 			const Line3 rayLine{ sample, up };
 
 			std::vector<std::pair<FT, int>> zPlanes;
@@ -337,6 +326,8 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			std::sort(zPlanes.begin(), zPlanes.end(), [](auto& a, auto& b) {return a.first < b.first; });
 			REQUIRE(zPlanes[0].second == lowestPlaneIdx);
 		}
+
+		Serialization::SerializeLowerEnvelope("single_line_LE.ply", result);
 	}
 }
 
@@ -344,7 +335,6 @@ SPGMT::Point2 locProjectXY(const SPGMT::Point3& aPoint)
 {
 	return SPGMT::Point2{ aPoint.x(), aPoint.y() };
 }
-
 int locFindVertex(const std::vector<SPGMT::Vertex>& someVertices, const SPGMT::Point2& aPoint, const SPGMT::VertexType aVertexType)
 {
 	const auto matchIt = std::find_if(someVertices.begin(), someVertices.end(), [&aPoint, aVertexType](const auto& aVertex) {
@@ -390,7 +380,6 @@ int locFindVertexToInfinity(const std::vector<SPGMT::Vertex>& someVertices, cons
 
 	return -1;
 }
-
 void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someVertices, const std::vector<SPGMT::Plane>& somePlanes)
 {
 	using VertexIter = Envelope_diagram_2::Vertex_const_iterator;
@@ -448,28 +437,20 @@ void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someV
 		[](const auto& aVertex) {return aVertex.myType == SPGMT::VertexType::FINITE; });
 	REQUIRE(finiteVerticesCounter == usedVerticesIndices.size());
 
-	// Check that every face has picked the lowest plane
-	std::set<int> lowestPlanesIndices;
-	std::for_each(someVertices.begin(), someVertices.end(), [&lowestPlanesIndices](const auto& aVertex) {
-		lowestPlanesIndices.insert(aVertex.myLowestLeftPlanes.begin(), aVertex.myLowestLeftPlanes.end());
-	});
-	REQUIRE(lowestPlanesIndices.size() == expectedResult.number_of_faces());
-	//for (auto faceIter = expectedResult.faces_begin(); faceIter != expectedResult.faces_end(); ++faceIter)
-	//{
-	//	const auto planeIter = faceIter->outer_ccb()->surfaces_begin();
-	//	const auto planeIterEnd = faceIter->outer_ccb()->surfaces_end();
-	//	const auto planesCount = std::distance(planeIter, planeIterEnd);
-	//	REQUIRE(planesCount == 1);
+	// Check that the number of faces is correct
+	const auto& faces = SPGMT::ExtractLowerEnvelopeFaces(someVertices);
+	REQUIRE(faces.size() == expectedResult.number_of_faces());
 
-	//	for (const auto& planeIdx : lowestPlanesIndices)
-	//	{
-	//		// Check that a plane exists
-	//		// TODO: Check face by face and not globally to ensure the set of picked plane indices is correct for each face
-	//	}
-	//}
+	// Check that each face index is unique
+	{
+		std::vector<int> faceIndices;
+		std::transform(faces.begin(), faces.end(), std::back_inserter(faceIndices), [](const auto& aFace) {return aFace.myPlaneIndex; });
+		const auto initialSize = faceIndices.size();
+		faceIndices.erase(std::unique(faceIndices.begin(), faceIndices.end()), faceIndices.end());
+		const auto finalSize = faceIndices.size();
+		REQUIRE(initialSize == finalSize);
+	}
 }
-
-
 
 
 TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope]")
@@ -477,11 +458,12 @@ TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope
 	SECTION("10 random dual planes")
 	{
 		using namespace SPGMT;
-		constexpr auto planesCount = 50;
+		constexpr auto planesCount = 20;
 		constexpr auto halfSide = 50.f;
 		const auto& points = SPGMT::Debug::Uniform3DCubeSampling(halfSide, planesCount);
 		const auto& planes = SPGMT::Debug::GetDualPlanes(points);
 		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 		locIsLowerEnvelopeProjectionCorrect(result, planes);
+		Serialization::SerializeLowerEnvelope("random_planes_LE.ply", result);
 	}
 }

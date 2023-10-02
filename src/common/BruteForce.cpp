@@ -48,10 +48,10 @@ namespace SPGMT
 			}
 			return isPointingUp;
 		}
-		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes)
+		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes, const Point3 & aPoint = Point3{0,0,0})
 		{
 			CGAL_precondition(somePlanes.size() > 0);
-			const Line3 upLine{ Point3{0,0,0}, Vec3{0,0,1} };
+			const Line3 upLine{ aPoint, Vec3{0,0,1} };
 			// Initialize minimum z with the first plane
 			FT minZ;
 			int lowestPlaneIdx = 0;
@@ -187,14 +187,6 @@ namespace SPGMT
 			return result;
 		}
 
-		template<typename T>
-		T locNormalize(const T& aVec)
-		{
-			auto const slen = aVec.squared_length();
-			auto const d = CGAL::sqrt(slen);
-			return aVec / d;
-		}
-
 		void locSortClockWise(Vertex& anOutVertex, const std::vector<Vertex>& someVertices)
 		{
 			struct InternalWrapper
@@ -229,42 +221,44 @@ namespace SPGMT
 				});
 		}
 
-		// Visual Help. https://www.falstad.com/dotproduct/
-		std::pair<int, int> locMinMaxSteepPlaneIndexThroughSegment(const Point3& aStart, const Point3& anEnd, const std::vector<Plane>& somePlanes, const std::vector<int>& somePlanesIndices)
+		// Visual Help. https://www.falstad.com/dotproduct/ | https://www.geogebra.org/3d?lang=en
+		int locMinSteepPlaneIndexThroughSegment(const Point3& aStart, const Point3& anEnd, const std::vector<Plane>& somePlanes, const std::vector<int>& somePlanesIndices)
 		{
 			const Vec3 upDir{ 0,0,1 };
 
 			CGAL_precondition(somePlanes.size() > 0);
 			CGAL_precondition(somePlanesIndices.size() > 0);
 
-			Vec3 segmentDir{ aStart, anEnd };
-			segmentDir = locNormalize(segmentDir);
+			const Vec3 segmentDir{ aStart, anEnd };
+			const Vec3 leftDir{ -CGAL::cross_product(segmentDir, upDir) };
+			const auto sampleLoc = CGAL::midpoint(aStart, anEnd) + leftDir * 1000.f;
 
-			const Vec3 leftDir{ CGAL::cross_product(segmentDir, upDir) };
-
-			FT maxSteep = CGAL::scalar_product(somePlanes[somePlanesIndices[0]].orthogonal_vector(), leftDir);
-			FT minSteep = maxSteep;
-			auto maxPlaneIdx = somePlanesIndices[0];
-			auto minPlaneIdx = maxPlaneIdx;
-
+			CGAL_precondition((somePlanes.size() > 0 && somePlanesIndices.size() > 0));
+			const Line3 upLine{ sampleLoc, upDir };
+			// Initialize minimum z with the first plane
+			FT minZ;
+			int lowestPlaneIdx = somePlanesIndices[0];
+			{
+				const auto intersection = CGAL::intersection(upLine, somePlanes[somePlanesIndices.front()]);
+				CGAL_precondition(intersection.has_value());
+				const Point3* point = boost::get<Point3>(&*intersection);
+				CGAL_precondition(point != nullptr);
+				minZ = point->z();
+			}
+			// Check all the remaining planes' z values
 			for (int i = 1; i < somePlanesIndices.size(); ++i)
 			{
-				const auto currentPlaneIdx = somePlanesIndices[i];
-				const auto dot = CGAL::scalar_product(somePlanes[currentPlaneIdx].orthogonal_vector(), leftDir);
-
-				if (dot > maxSteep)
+				const auto intersection = CGAL::intersection(upLine, somePlanes[somePlanesIndices[i]]);
+				CGAL_precondition(intersection.has_value());
+				const Point3* point = boost::get<Point3>(&*intersection);
+				CGAL_precondition(point != nullptr);
+				if (point->z() < minZ)
 				{
-					maxSteep = dot;
-					maxPlaneIdx = currentPlaneIdx;
-				}
-				else if (dot < minSteep)
-				{
-					minSteep = dot;
-					minPlaneIdx = currentPlaneIdx;
+					minZ = point->z();
+					lowestPlaneIdx = somePlanesIndices[i];
 				}
 			}
-
-			return std::make_pair(minPlaneIdx, maxPlaneIdx);
+			return lowestPlaneIdx;
 		}
 		Vec3 locGetUniformLineVector(const LineData& aLineData)
 		{
@@ -279,6 +273,29 @@ namespace SPGMT
 			{
 				return Vec3{ b, a };
 			}
+		}
+
+		std::vector<int> locTraversePlaneEdges(const std::vector<Vertex>& someVertices, const int aStartingVertexIdx, const int aPlaneIdx)
+		{
+			std::vector<int> result;
+			int currentVertexIdx = aStartingVertexIdx;
+			while (currentVertexIdx > -1)
+			{
+				result.push_back(currentVertexIdx);
+				const auto& vertex = someVertices[currentVertexIdx];
+				currentVertexIdx = -1;
+				for (int i = 0; i < vertex.myLowestLeftPlanes.size(); ++i)
+				{
+					if (vertex.myLowestLeftPlanes[i] == aPlaneIdx && 
+						vertex.mySortedNeighboursIndices[i] != aStartingVertexIdx)
+					{
+						currentVertexIdx = vertex.mySortedNeighboursIndices[i];
+						break;
+					}
+				}
+			}
+			CGAL_postcondition(result.size() > 1);
+			return result;
 		}
 	}
 
@@ -329,11 +346,14 @@ namespace SPGMT
 					end.mySortedNeighboursIndices.push_back(0);
 					end.myType = VertexType::INFINITE;
 
-					const auto minMaxPlaneIndices =
-						locMinMaxSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLineData.myPlanesIndices);
+					const auto minLeftPlaneIdx =
+						locMinSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLineData.myPlanesIndices);
 
-					start.myLowestLeftPlanes.push_back(minMaxPlaneIndices.second);
-					end.myLowestLeftPlanes.push_back(minMaxPlaneIndices.first);
+					const auto minRightPlaneIdx =
+						locMinSteepPlaneIndexThroughSegment(end.myPoint, start.myPoint, somePlanes, currentLineData.myPlanesIndices);
+
+					start.myLowestLeftPlanes.push_back(minLeftPlaneIdx);
+					end.myLowestLeftPlanes.push_back(minRightPlaneIdx);
 
 					result.push_back(start);
 					result.push_back(end);
@@ -428,14 +448,17 @@ namespace SPGMT
 					auto& start = result[startIter->myIndex];
 					auto& end = result[endIter->myIndex];
 
-					const auto minMaxPlaneIndices = locMinMaxSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint,
-						somePlanes, currentLine.myPlanesIndices);
+					const auto minLeftPlaneIdx =
+						locMinSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLine.myPlanesIndices);
+
+					const auto minRightPlaneIdx =
+						locMinSteepPlaneIndexThroughSegment(end.myPoint, start.myPoint, somePlanes, currentLine.myPlanesIndices);
 
 					start.mySortedNeighboursIndices.push_back(endIter->myIndex);
-					start.myLowestLeftPlanes.push_back(minMaxPlaneIndices.second);
+					start.myLowestLeftPlanes.push_back(minLeftPlaneIdx);
 
 					end.mySortedNeighboursIndices.push_back(startIter->myIndex);
-					end.myLowestLeftPlanes.push_back(minMaxPlaneIndices.first);
+					end.myLowestLeftPlanes.push_back(minRightPlaneIdx);
 
 					segmentStartIdx = -1;
 				}
@@ -455,5 +478,66 @@ namespace SPGMT
 		}
 
 		return result;
+	}
+
+	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices)
+	{
+		std::vector<Face> faces;
+		std::set<int> collectedFaces;
+
+		for (int i = 0; i < someVertices.size(); ++i)
+		{
+			const auto& vertex = someVertices[i];
+			if (vertex.myType == VertexType::INFINITE)
+			{
+				// Trivial requirements
+				CGAL_precondition(vertex.myLowestLeftPlanes.size() == 1);
+				CGAL_precondition(vertex.mySortedNeighboursIndices.size() == 1);
+
+				Face face;
+
+				face.myPlaneIndex = vertex.myLowestLeftPlanes.front();
+				face.myVertexIndices = locTraversePlaneEdges(someVertices, i, vertex.myLowestLeftPlanes.front());
+
+				if (face.myVertexIndices.size() == 2)
+				{
+					face.myType = FaceType::UNBOUNDED_ONE_EDGE;
+				}
+				else
+				{
+					const auto& lastVertexNeighbours = someVertices[face.myVertexIndices.back()].mySortedNeighboursIndices;
+					const auto isBoundaryOpen = std::find(lastVertexNeighbours.begin(), lastVertexNeighbours.end(), 
+						face.myVertexIndices.front()) == lastVertexNeighbours.end();
+					if (isBoundaryOpen)
+					{
+						face.myType = FaceType::UNBOUNDED;
+					}
+				}
+
+				collectedFaces.insert(face.myPlaneIndex);
+				faces.push_back(face);
+			}
+		}
+
+		for (int i = 0; i < someVertices.size(); ++i)
+		{
+			const auto& vertex = someVertices[i];
+			if (vertex.myType == VertexType::FINITE)
+			{
+				for (int j = 0; j < vertex.myLowestLeftPlanes.size(); ++j)
+				{
+					const auto planeIdx = vertex.myLowestLeftPlanes[j];
+					if (collectedFaces.find(planeIdx) == collectedFaces.end())
+					{
+						Face face;
+						face.myPlaneIndex = planeIdx;
+						face.myVertexIndices = locTraversePlaneEdges(someVertices, i, planeIdx);
+						faces.push_back(face);
+						collectedFaces.insert(planeIdx);
+					}
+				}
+			}
+		}
+		return faces;
 	}
 }

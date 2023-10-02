@@ -18,5 +18,20 @@ namespace SPGMT
 		std::vector<int> myLowestLeftPlanes;
 	};
 
+	enum class FaceType
+	{
+		BOUNDED,
+		UNBOUNDED,
+		UNBOUNDED_ONE_EDGE
+	};
+
+	struct Face
+	{
+		FaceType myType{ FaceType::BOUNDED };
+		std::vector<int> myVertexIndices;
+		int myPlaneIndex{ -1 };
+	};
+
 	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
+	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices);
 }
