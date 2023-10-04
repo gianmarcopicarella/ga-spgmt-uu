@@ -2,13 +2,13 @@ set(CGAL_DATA_DIR ${PROJECT_SOURCE_DIR}/data)
 
 find_package(CGAL REQUIRED)
 
-find_package(Corrade REQUIRED Main)
-find_package(Magnum REQUIRED GL
-MeshTools
-Primitives
-Shaders
-Trade
-Sdl2Application)
+# find_package(Corrade REQUIRED Main)
+# find_package(Magnum REQUIRED GL
+# MeshTools
+# Primitives
+# Shaders
+# Trade
+# Sdl2Application)
 
 # find_package (Eigen3 3.1.0 QUIET NO_MODULE)
 # include(CGAL_Eigen3_support)
@@ -58,17 +58,17 @@ target_link_libraries(main ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} )
 target_link_libraries(tests ${CGAL_LIBRARIES} ${CGAL_3RD_PARTY_LIBRARIES} )
 endif()
 
-set(MAGNUM_MODULES Corrade::Main
-Magnum::Application
-Magnum::GL
-Magnum::Magnum
-Magnum::MeshTools
-Magnum::Primitives
-Magnum::Shaders
-Magnum::Trade)
+# set(MAGNUM_MODULES Corrade::Main
+# Magnum::Application
+# Magnum::GL
+# Magnum::Magnum
+# Magnum::MeshTools
+# Magnum::Primitives
+# Magnum::Shaders
+# Magnum::Trade)
 
-target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data ${MAGNUM_MODULES})
-target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::Data ${MAGNUM_MODULES})
+target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data sfml-graphics)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::Data sfml-graphics)
 
 # if(IPE_FOUND)
 # foreach(IPELET_PATH ${IPELETS_ALL})

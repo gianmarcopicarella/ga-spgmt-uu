@@ -15,6 +15,7 @@
 #include <CGAL/Segment_3.h>
 #include <CGAL/Ray_2.h>
 #include <CGAL/Sphere_3.h>
+#include <CGAL/Iso_rectangle_2.h>
 
 // Only for debug
 //#include <CGAL/Simple_cartesian.h>
@@ -51,4 +52,5 @@ namespace SPGMT
     typedef CGAL::Segment_3<Kernel> Segment3;
     typedef Kernel::Ray_2 Ray2;
     typedef Kernel::Sphere_3 Sphere3;
+    typedef Kernel::Iso_rectangle_2 Rec2;
 }

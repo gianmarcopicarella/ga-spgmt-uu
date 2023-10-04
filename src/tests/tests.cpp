@@ -6,7 +6,7 @@
 #include "../common/DebugUtils.h"
 
 #include "../common/Serialize.h"
-
+#include "../common/Visualization.h"
 /*
 Currently this function must behave correctly for the following cases:
 1) No Plane intersections found -> Parallel planes (vertical/horizontal cases too) DONE
@@ -327,7 +327,7 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			REQUIRE(zPlanes[0].second == lowestPlaneIdx);
 		}
 
-		Serialization::SerializeLowerEnvelope("single_line_LE.ply", result);
+		//Serialization::SerializeLowerEnvelope("single_line_LE.ply", result);
 	}
 }
 
@@ -458,12 +458,14 @@ TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope
 	SECTION("10 random dual planes")
 	{
 		using namespace SPGMT;
-		constexpr auto planesCount = 20;
+		constexpr auto planesCount = 30;
 		constexpr auto halfSide = 50.f;
 		const auto& points = SPGMT::Debug::Uniform3DCubeSampling(halfSide, planesCount);
 		const auto& planes = SPGMT::Debug::GetDualPlanes(points);
 		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 		locIsLowerEnvelopeProjectionCorrect(result, planes);
-		Serialization::SerializeLowerEnvelope("random_planes_LE.ply", result);
+
+		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
+		//Serialization::SerializeLowerEnvelope("random_planes_LE.ply", result);
 	}
 }

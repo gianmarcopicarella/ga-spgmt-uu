@@ -483,6 +483,17 @@ namespace SPGMT
 	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices)
 	{
 		std::vector<Face> faces;
+		
+		// Edge case happening when the entire lower envelope has one single infinite face
+		if (someVertices.size() == 1 && someVertices.front().myType == VertexType::INFINITE)
+		{
+			Face singleFace;
+			singleFace.myPlaneIndex = someVertices.front().myLowestLeftPlanes.front();
+			singleFace.myType = FaceType::UNBOUNDED;
+			faces.push_back(singleFace);
+			return faces;
+		}
+		
 		std::set<int> collectedFaces;
 
 		for (int i = 0; i < someVertices.size(); ++i)
@@ -539,5 +550,14 @@ namespace SPGMT
 			}
 		}
 		return faces;
+	}
+
+	std::vector<int> TriangulateLowerEnvelopeFaces(const std::vector<Vertex>& someVertices, const std::vector<Face>& someFaces)
+	{
+		std::vector<int> result;
+
+
+
+		return result;
 	}
 }
