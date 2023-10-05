@@ -1,6 +1,6 @@
 set(CGAL_DATA_DIR ${PROJECT_SOURCE_DIR}/data)
 
-find_package(CGAL REQUIRED)
+find_package(CGAL REQUIRED COMPONENTS Qt5)
 
 # find_package(Corrade REQUIRED Main)
 # find_package(Magnum REQUIRED GL
@@ -67,6 +67,7 @@ endif()
 # Magnum::Shaders
 # Magnum::Trade)
 
+# should add  CGAL::CGAL_Basic_viewer in order to use Qt5
 target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data sfml-graphics)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::Data sfml-graphics)
 
