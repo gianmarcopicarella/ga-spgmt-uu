@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <CGAL/Random.h>
-
+#include <map>
 #include "Types.h"
 
 namespace SPGMT
@@ -29,11 +29,12 @@ namespace SPGMT
 	struct TriangulationData
 	{
 		std::vector<int> myVerticesIndices;
+		std::map<std::pair<int, int>, std::vector<int>> myTrianglesIndicesAtEdge;
 	};
 
 	std::vector<Vertex> ComputeLowerEnvelopeSmart(const std::vector<Plane>& somePlanes);
 
 	struct Face;
-	std::vector<TriangulationData> TriangulateLowerEnvelopeFaces(const std::vector<Face>& someFaces, const bool aComputeAllEdges = true);
+	TriangulationData TriangulateLowerEnvelopeFaces(const std::vector<Face>& someFaces, const bool aComputeAllEdges = true);
 
 }

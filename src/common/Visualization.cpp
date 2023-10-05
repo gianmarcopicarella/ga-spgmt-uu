@@ -6,9 +6,6 @@
 #include <CGAL/bounding_box.h>
 #include <CGAL/assertions.h>
 
-
-#include "SmartLowerEnvelope.h"
-
 namespace SPGMT
 {
 	namespace Visualization
