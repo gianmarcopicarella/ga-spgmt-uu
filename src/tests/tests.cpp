@@ -7,11 +7,8 @@
 
 #include "../common/Serialize.h"
 #include "../common/Visualization.h"
-/*
-Currently this function must behave correctly for the following cases:
-1) No Plane intersections found -> Parallel planes (vertical/horizontal cases too) DONE
-2) No Plane intersections found -> Only one plane. DONE
-*/
+
+#include "../common/Utils.h"
 
 TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
 {
@@ -282,6 +279,7 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			const auto requirement = !planes[i].has_on_positive_side(planes[resultPlaneIdx].point());
 			REQUIRE(requirement);
 		}
+		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
 
 	SECTION("100 random, non-vertical parallel planes and one horizontal plane")
@@ -327,6 +325,7 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			REQUIRE(zPlanes[0].second == lowestPlaneIdx);
 		}
 
+		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 		//Serialization::SerializeLowerEnvelope("single_line_LE.ply", result);
 	}
 }
@@ -455,17 +454,15 @@ void locIsLowerEnvelopeProjectionCorrect(const std::vector<SPGMT::Vertex>& someV
 
 TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope]")
 {
-	SECTION("10 random dual planes")
+	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
-		constexpr auto planesCount = 30;
-		constexpr auto halfSide = 50.f;
-		const auto& points = SPGMT::Debug::Uniform3DCubeSampling(halfSide, planesCount);
-		const auto& planes = SPGMT::Debug::GetDualPlanes(points);
+		constexpr auto planesCount = 20;
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
 		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 		locIsLowerEnvelopeProjectionCorrect(result, planes);
 
-		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
+		SPGMT::Visualization::VisualizeLowerEnvelope(result);
 		//Serialization::SerializeLowerEnvelope("random_planes_LE.ply", result);
 	}
 }

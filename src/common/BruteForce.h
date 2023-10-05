@@ -34,5 +34,4 @@ namespace SPGMT
 
 	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
 	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices);
-	std::vector<int> TriangulateLowerEnvelopeFaces(const std::vector<Vertex>& someVertices, const std::vector<Face>& someFaces);
 }

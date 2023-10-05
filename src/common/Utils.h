@@ -84,5 +84,9 @@ namespace SPGMT
 			}
 			return result;
 		}
+
+		std::vector<Plane> EnforceUpwardsOrientation(const std::vector<Plane>& somePlanes);
+		std::vector<Point3> DualMapping(const std::vector<Plane>& somePlanes);
+		std::vector<Plane> DualMapping(const std::vector<Point3>& somePoints);
 	}
 }

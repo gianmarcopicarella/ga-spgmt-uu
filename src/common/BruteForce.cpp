@@ -1,5 +1,6 @@
 #include "BruteForce.h"
 #include "Utils.h"
+#include <CGAL/Polygon_2_algorithms.h>
 
 namespace SPGMT
 {
@@ -48,7 +49,7 @@ namespace SPGMT
 			}
 			return isPointingUp;
 		}
-		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes, const Point3 & aPoint = Point3{0,0,0})
+		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes, const Point3& aPoint = Point3{ 0,0,0 })
 		{
 			CGAL_precondition(somePlanes.size() > 0);
 			const Line3 upLine{ aPoint, Vec3{0,0,1} };
@@ -79,7 +80,7 @@ namespace SPGMT
 		}
 		bool locIsVertexInLowerEnvelope(const std::vector<Plane>& somePlanes, const Point3& aPoint)
 		{
-			const Line3 upLine { aPoint, Vec3{0,0,1} };
+			const Line3 upLine{ aPoint, Vec3{0,0,1} };
 			FT minZ = aPoint.z();
 			for (int i = 0; i < somePlanes.size(); ++i)
 			{
@@ -286,7 +287,7 @@ namespace SPGMT
 				currentVertexIdx = -1;
 				for (int i = 0; i < vertex.myLowestLeftPlanes.size(); ++i)
 				{
-					if (vertex.myLowestLeftPlanes[i] == aPlaneIdx && 
+					if (vertex.myLowestLeftPlanes[i] == aPlaneIdx &&
 						vertex.mySortedNeighboursIndices[i] != aStartingVertexIdx)
 					{
 						currentVertexIdx = vertex.mySortedNeighboursIndices[i];
@@ -297,6 +298,22 @@ namespace SPGMT
 			CGAL_postcondition(result.size() > 1);
 			return result;
 		}
+
+		bool locFaceSanityCheck(const std::vector<Vertex>& someVertices, const Face& aFace)
+		{
+			CGAL_precondition(aFace.myType != FaceType::UNBOUNDED_ONE_EDGE);
+			std::vector<Point2> points;
+			for (const auto vertexIdx : aFace.myVertexIndices)
+			{
+				const auto& currVertex = someVertices[vertexIdx];
+				points.push_back(Point2{ currVertex.myPoint.x(), currVertex.myPoint.y() });
+			}
+
+			CGAL_postcondition(CGAL::orientation_2(points.begin(), points.end()) == CGAL::Orientation::COUNTERCLOCKWISE);
+			CGAL_postcondition(CGAL::is_simple_2(points.begin(), points.end()));
+			return CGAL::is_convex_2(points.begin(), points.end());
+		}
+
 	}
 
 	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
@@ -483,7 +500,7 @@ namespace SPGMT
 	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices)
 	{
 		std::vector<Face> faces;
-		
+
 		// Edge case happening when the entire lower envelope has one single infinite face
 		if (someVertices.size() == 1 && someVertices.front().myType == VertexType::INFINITE)
 		{
@@ -493,7 +510,7 @@ namespace SPGMT
 			faces.push_back(singleFace);
 			return faces;
 		}
-		
+
 		std::set<int> collectedFaces;
 
 		for (int i = 0; i < someVertices.size(); ++i)
@@ -517,12 +534,13 @@ namespace SPGMT
 				else
 				{
 					const auto& lastVertexNeighbours = someVertices[face.myVertexIndices.back()].mySortedNeighboursIndices;
-					const auto isBoundaryOpen = std::find(lastVertexNeighbours.begin(), lastVertexNeighbours.end(), 
+					const auto isBoundaryOpen = std::find(lastVertexNeighbours.begin(), lastVertexNeighbours.end(),
 						face.myVertexIndices.front()) == lastVertexNeighbours.end();
 					if (isBoundaryOpen)
 					{
 						face.myType = FaceType::UNBOUNDED;
 					}
+					CGAL_postcondition(locFaceSanityCheck(someVertices, face));
 				}
 
 				collectedFaces.insert(face.myPlaneIndex);
@@ -543,6 +561,9 @@ namespace SPGMT
 						Face face;
 						face.myPlaneIndex = planeIdx;
 						face.myVertexIndices = locTraversePlaneEdges(someVertices, i, planeIdx);
+						
+						CGAL_postcondition(locFaceSanityCheck(someVertices, face));
+						
 						faces.push_back(face);
 						collectedFaces.insert(planeIdx);
 					}
@@ -550,14 +571,5 @@ namespace SPGMT
 			}
 		}
 		return faces;
-	}
-
-	std::vector<int> TriangulateLowerEnvelopeFaces(const std::vector<Vertex>& someVertices, const std::vector<Face>& someFaces)
-	{
-		std::vector<int> result;
-
-
-
-		return result;
 	}
 }

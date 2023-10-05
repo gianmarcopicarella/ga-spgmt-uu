@@ -8,11 +8,11 @@
 
 namespace SPGMT
 {
-	const unsigned long int SEED = 23322392398;
-	const unsigned long int SEED2 = 22392398232;
+	/*const unsigned long int SEED = 23322392398;
+	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*1306513302*//*4169948633*/ };
+		static CGAL::Random rand{ /*3222535971*//*1306513302*//*4169948633*/ };
 		return rand;
 	}
 
@@ -81,11 +81,6 @@ namespace SPGMT
 			}
 			return result;
 		}
-
-		bool locIsValidPointForDuality(const Point3& aPoint)
-		{
-			return aPoint.x() != 0 || aPoint.y() != 0 || aPoint.z() != 0;
-		}
 	}
 
 	namespace Debug
@@ -95,40 +90,6 @@ namespace SPGMT
 			Envelope_diagram_2      min_diag;
 			CGAL::lower_envelope_3(somePlanes.begin(), somePlanes.end(), min_diag);
 			return min_diag;
-		}
-
-		// Reference (also for an improved version avoiding the creation of a potential useless plane object)
-		// https://math.stackexchange.com/questions/1375308/flip-normal-of-plane
-		std::vector<Plane> GetDualPlanes(const std::vector<Point3>& somePoints)
-		{
-			std::vector<Plane> dualPlanes;
-			dualPlanes.reserve(somePoints.size());
-
-			const Vec3 up{ 0,0,1 };
-
-			for (auto i = 0; i < somePoints.size(); ++i)
-			{
-				CGAL_precondition(locIsValidPointForDuality(somePoints[i]));
-
-				const auto a = somePoints[i].x();
-				const auto b = somePoints[i].y();
-				const auto c = -somePoints[i].z();
-				const auto d = a + b + c;
-
-				const auto dot = CGAL::scalar_product(up, Plane{ a,b,c,d }.orthogonal_vector());
-
-				if (dot < 0.f)
-				{
-					dualPlanes.push_back(Plane{ -a,-b,-c,d });
-				}
-				else
-				{
-					dualPlanes.push_back(Plane{ a,b,c,d });
-				}
-
-			}
-
-			return dualPlanes;
 		}
 
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount)
@@ -181,7 +142,7 @@ namespace SPGMT
 		{
 			std::vector<Point3> samples;
 			samples.reserve(aSampleCount);
-			CGAL::Random_points_in_cube_3<Point3> generator{ anHalfSide, GetDefaultRandom()};
+			CGAL::Random_points_in_cube_3<Point3> generator{ anHalfSide, GetDefaultRandom() };
 			std::copy_n(generator, aSampleCount, std::back_inserter(samples));
 			// (NOT MANDATORY) Use a random permutation to hide the creation history of the point set.
 			return samples;
