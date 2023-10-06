@@ -19,8 +19,8 @@ namespace SPGMT
 
 		bool ArePlanesNonVertical(const std::vector<Plane>& somePlanes)
 		{
-			static const Vec3 verticalAxis{ 0,0,1 };
-			static const FT zero{ 0 };
+			const Vec3 verticalAxis{ 0,0,1 };
+			const FT zero{ 0 };
 			auto arePlanesNonVertical{ true };
 			for (int i = 0; i < somePlanes.size() && arePlanesNonVertical; ++i)
 			{
@@ -32,8 +32,8 @@ namespace SPGMT
 
 		bool ArePlanesUniformlyOriented(const std::vector<Plane>& somePlanes)
 		{
-			static const Vec3 up{ 0, 0, 1 };
-			static const FT zero{ 0 };
+			const Vec3 up{ 0, 0, 1 };
+			const FT zero{ 0 };
 			auto isPointingDown{ false }, isPointingUp{ false };
 			for (auto& plane : somePlanes)
 			{
