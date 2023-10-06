@@ -34,6 +34,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 		constexpr auto minPlaneDistance = 20.f;
 
 		auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planeSamplesCount, minPlaneDistance);
+
 		std::vector<SPGMT::Point3> points;
 
 		for (auto i = 0; i < planes.size(); ++i)

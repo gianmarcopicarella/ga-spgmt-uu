@@ -484,6 +484,17 @@ namespace SPGMT
 		}
 	}
 
+
+	std::vector<PlaneWrapper> GetPlaneWrappers(const std::vector<Plane>& somePlanes)
+	{
+		std::vector<PlaneWrapper> result;
+		for (const auto& plane : somePlanes)
+		{
+			result.push_back(PlaneWrapper{ plane });
+		}
+		return result;
+	}
+
 	Result BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
 	{
 		if (somePlanes.empty() || somePoints.empty())
@@ -497,7 +508,7 @@ namespace SPGMT
 		CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
 
 		// Compute plane-plane intersections
-		const auto lines3d = Utils::FindIntersections<Utils::PlanePlaneVisitor>(somePlanes);
+		const auto& lines3d = Utils::FindIntersections<Utils::PlanePlaneVisitor>(somePlanes);
 
 		// 1st edge case: single plane or parallel planes
 		if (lines3d.empty())

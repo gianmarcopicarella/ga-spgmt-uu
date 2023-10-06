@@ -51,19 +51,33 @@ namespace SPGMT
 			return true;
 		}
 
+		Point3 SingleDualMapping(const Plane& aPlane)
+		{
+			CGAL_precondition(locIsValidPlaneForDuality(aPlane));
+			const auto& x = aPlane.a();
+			const auto& y = aPlane.b();
+			const auto& z = -aPlane.c();
+			return Point3{ x,y,z };
+		}
+
+		Plane SingleDualMapping(const Point3& aPoint)
+		{
+			CGAL_precondition(locIsValidPointForDuality(aPoint));
+			const auto& a = aPoint.x();
+			const auto& b = aPoint.y();
+			const auto& c = -aPoint.z();
+			const auto& d = a + b + c;
+			return Plane{ a,b,c,d };
+		}
+
 		std::vector<Point3> DualMapping(const std::vector<Plane>& somePlanes)
 		{
-			CGAL_precondition(false);
 			std::vector<Point3> result;
 			result.reserve(somePlanes.size());
 			
 			for (auto i = 0; i < somePlanes.size(); ++i)
 			{
-				CGAL_precondition(locIsValidPlaneForDuality(somePlanes[i]));
-				const auto& x = somePlanes[i].a();
-				const auto& y = somePlanes[i].b();
-				const auto& z = -somePlanes[i].c();
-				result.push_back(Point3{ x,y,z });
+				result.push_back(SingleDualMapping(somePlanes[i]));
 			}
 
 			return result;
@@ -78,12 +92,7 @@ namespace SPGMT
 			const Vec3 up{ 0,0,1 };
 			for (auto i = 0; i < somePoints.size(); ++i)
 			{
-				CGAL_precondition(locIsValidPointForDuality(somePoints[i]));
-				const auto& a = somePoints[i].x();
-				const auto& b = somePoints[i].y();
-				const auto& c = -somePoints[i].z();
-				const auto& d = a + b + c;
-				result.push_back(Plane{ a,b,c,d });
+				result.push_back(SingleDualMapping(somePoints[i]));
 			}
 			return result;
 		}

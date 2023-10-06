@@ -12,7 +12,7 @@ namespace SPGMT
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*3222535971*//*1306513302*//*4169948633*/ };
+		static CGAL::Random rand{ 3429112288/*3222535971*//*1306513302*//*4169948633*/ };
 		return rand;
 	}
 
@@ -81,6 +81,26 @@ namespace SPGMT
 			}
 			return result;
 		}
+
+		// Trivial and inefficient implementation. 
+		// The numeric data structure doesn't seem to behave correctly when using std::swap
+		template<typename T>
+		std::vector<T> locShuffle(const std::vector<T>& someItems)
+		{
+			CGAL::Random rand{ GetDefaultRandom() };
+			std::vector<int> indices(someItems.size());
+			std::iota(indices.begin(), indices.end(), 0);
+			for (int i = 0; i < someItems.size(); ++i)
+			{
+				std::swap(indices[i], indices[rand.get_int(i, someItems.size())]);
+			}
+			std::vector<T> items(someItems.size());
+			for (int i = 0; i < someItems.size(); ++i)
+			{
+				items[indices[i]] = someItems[i];
+			}
+			return items;
+		}
 	}
 
 	namespace Debug
@@ -133,8 +153,6 @@ namespace SPGMT
 					samples.push_back(alongVerticalPoint);
 				}
 			}
-
-
 			return samples;
 		}
 
@@ -214,10 +232,7 @@ namespace SPGMT
 
 		std::vector<Plane> RandomParallelPlanesSampling(const int aSampleCount, const double aMinPlaneDistance, const double aMaxPlaneDistance)
 		{
-			std::vector<Plane> parallelPlanes{ RandomPlaneSampling(1) };
-
-			//std::cout << parallelPlanes[0] << std::endl;
-
+			std::vector<Plane> parallelPlanes = RandomPlaneSampling(1);
 			CGAL::Random random{ GetDefaultRandom() };
 
 			CGAL_precondition(aMinPlaneDistance > 0.f);
@@ -231,13 +246,13 @@ namespace SPGMT
 				const Plane plane{ planePoint, parallelPlanes.back().orthogonal_vector() };
 
 				parallelPlanes.push_back(plane);
-				//std::cout << plane << std::endl;
 			}
 
-			CGAL::cpp98::random_shuffle(parallelPlanes.begin(), parallelPlanes.end(), GetDefaultRandom());
-
-			//std::cout << parallelPlanes[0] << std::endl;
-
+			parallelPlanes = locShuffle(parallelPlanes);
+			// My intuition is that random_shuffle internally uses std::swap and the Plane structure or 
+			// other inner data structure into it are not swapped properly, thus causing a crash after the swap has happened.
+			// The only working way seems to copy all the data at different locations as in "locShuffle"
+			//CGAL::cpp98::random_shuffle(parallelPlanes.begin(), parallelPlanes.end(), GetDefaultRandom());
 			return parallelPlanes;
 		}
 
