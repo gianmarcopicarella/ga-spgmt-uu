@@ -17,35 +17,27 @@ namespace SPGMT
 				return c + ((d - c) / (b - a)) * (t - a);
 			}
 
-			struct EdgePairHash
+			struct LinearMapToScreen
 			{
-				inline std::size_t operator()(const std::pair<int, int>& v) const
+				float myWidth, myHeight, myRangeOffset, myVideoOffset;
+				Cube myBB;
+				LinearMapToScreen(const std::vector<Point3>& somePoints, const float aWidth, const float anHeight,
+					const float aRangeOffset = 1.f, const float aVideoOffset = 50.f) :
+					myWidth(aWidth), myHeight(anHeight), myRangeOffset(aRangeOffset),
+					myVideoOffset(aVideoOffset), myBB(CGAL::bounding_box(somePoints.begin(), somePoints.end()))
+				{}
+				sf::Vector2f MapPointToScreen(const Point2& aPosition) const
 				{
-					return v.first * 31 + v.second;
+					const auto x = locLinearRangeMap(aPosition.x(), myBB.xmin() - myRangeOffset, myBB.xmax() + myRangeOffset,
+						myVideoOffset, myWidth - myVideoOffset);
+					const auto y = locLinearRangeMap(aPosition.y(), myBB.ymin() - myRangeOffset, myBB.ymax() + myRangeOffset,
+						myVideoOffset, myHeight - myVideoOffset);
+					return sf::Vector2f{ (float)CGAL::to_double(x), myHeight - (float)CGAL::to_double(y) };
 				}
 			};
 		}
 
-		struct LinearMapToScreen
-		{
-			float myWidth, myHeight, myRangeOffset, myVideoOffset;
-			Cube myBB;
-			LinearMapToScreen(const std::vector<Point3>& somePoints, const float aWidth, const float anHeight, 
-				const float aRangeOffset = 1.f, const float aVideoOffset = 50.f) :
-				myWidth(aWidth), myHeight(anHeight), myRangeOffset(aRangeOffset), 
-				myVideoOffset(aVideoOffset), myBB(CGAL::bounding_box(somePoints.begin(), somePoints.end()))
-			{}
-			sf::Vector2f MapPointToScreen(const Point2& aPosition) const
-			{
-				const auto x = locLinearRangeMap(aPosition.x(), myBB.xmin() - myRangeOffset, myBB.xmax() + myRangeOffset, 
-					myVideoOffset, myWidth - myVideoOffset);
-				const auto y = locLinearRangeMap(aPosition.y(), myBB.ymin() - myRangeOffset, myBB.ymax() + myRangeOffset, 
-					myVideoOffset, myHeight - myVideoOffset);
-				return sf::Vector2f{ (float)CGAL::to_double(x), myHeight - (float)CGAL::to_double(y) };
-			}
-		};
-
-		void VisualizeLowerEnvelope(const std::vector<Vertex>& someVertices)
+		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope)
 		{
 			constexpr auto width = 1280.f;
 			constexpr auto height = 720.f;
@@ -53,76 +45,111 @@ namespace SPGMT
 
 			std::vector<sf::Vector2f> positions;
 			std::vector<sf::Vertex> edges;
-			
-			// If there are one or more edges with both ends at infinity
-			// then handle this case properly
-			constexpr auto singleEdgeFaceFind = [](const auto& aFace) { return aFace.myType == FaceType::UNBOUNDED_ONE_EDGE; };
-			const auto& faces = ExtractLowerEnvelopeFaces(someVertices);
-			const auto areThereSingleEdgeFaces = std::find_if(faces.begin(), faces.end(), singleEdgeFaceFind) != faces.end();
-			if (areThereSingleEdgeFaces)
+
+			CGAL_precondition(!std::holds_alternative<std::monostate>(aLowerEnvelope));
+
+			if (std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope))
 			{
-				// Collect lines ends
-				constexpr auto transform = [](const auto& aVertex) {return aVertex.myPoint; };
-				std::vector<Point3> points;
-				std::transform(someVertices.begin(), someVertices.end(), std::back_inserter(points), transform);
-				// Build BB and map points to screen space
-				constexpr auto rangeOffset = 1.f;
-				constexpr auto videoOffset = -50.f;
-				const LinearMapToScreen mapping{ points, width, height, rangeOffset, videoOffset };
-				Point2 cgalVertexPosition{ someVertices.front().myPoint.x(), someVertices.front().myPoint.y()};
-				const auto& startVertexPosition = mapping.MapPointToScreen(cgalVertexPosition);
-				cgalVertexPosition = Point2{ someVertices.back().myPoint.x(), someVertices.back().myPoint.y()};
-				const auto& endVertexPosition = mapping.MapPointToScreen(cgalVertexPosition);
-				edges.push_back(sf::Vertex{ startVertexPosition, sf::Color::White });
-				edges.push_back(sf::Vertex{ endVertexPosition, sf::Color::White });
-			}
-			else if(someVertices.size() > 1)
-			{
-				std::vector<Point3> points;
+				auto lowerEnvelope = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
+
+				if (lowerEnvelope.size() == 2 && lowerEnvelope[0].myType == EdgeType::LINE && lowerEnvelope[1].myType == EdgeType::LINE)
 				{
-					constexpr auto copy = [](const auto& aVertex) { return aVertex.myType == VertexType::FINITE; };
-					constexpr auto transform = [](const auto& aVertex) {return aVertex.myPoint; };
-					std::vector<Vertex> finiteVertices;
-					std::copy_if(someVertices.begin(), someVertices.end(), std::back_inserter(finiteVertices), copy);
-					std::transform(finiteVertices.begin(), finiteVertices.end(), std::back_inserter(points), transform);
+					std::vector<Point3> points;
+					points.emplace_back(lowerEnvelope[0].myStart);
+					points.emplace_back(lowerEnvelope[0].myEnd);
+
+					constexpr auto rangeOffset = 1.f;
+					constexpr auto videoOffset = -50.f;
+					const LinearMapToScreen mapping{ points, width, height, rangeOffset, videoOffset };
+					Point2 cgalVertexPosition{ points.front().x(), points.front().y() };
+					const auto& startVertexPosition = mapping.MapPointToScreen(cgalVertexPosition);
+					cgalVertexPosition = Point2{ points.back().x(), points.back().y() };
+					const auto& endVertexPosition = mapping.MapPointToScreen(cgalVertexPosition);
+					edges.push_back(sf::Vertex{ startVertexPosition, sf::Color::White });
+					edges.push_back(sf::Vertex{ endVertexPosition, sf::Color::White });
 				}
-				const LinearMapToScreen mapping{ points, width, height};
-				std::unordered_set<std::pair<int, int>, EdgePairHash> uniqueEdges;
-				for (int i = 0; i < someVertices.size(); ++i)
+				else
 				{
-					if (someVertices[i].myType == VertexType::FINITE)
+					std::vector<Point3> uniquePoints;
+					std::vector<Edge<Point3>> uniqueEdges;
+
 					{
-						const auto& vertexPosition = 
-							mapping.MapPointToScreen(Point2{ someVertices[i].myPoint.x(), someVertices[i].myPoint.y() });
-						positions.push_back(vertexPosition);
-						for (const auto k : someVertices[i].mySortedNeighboursIndices)
+						const auto sortEdges = [](auto& aFirstEdge, auto& aSecondEdge)
 						{
-							uniqueEdges.insert(std::make_pair(std::min(i, k), std::max(i, k)));
+							return aFirstEdge.myStart < aSecondEdge.myStart ||
+								(aFirstEdge.myStart == aSecondEdge.myStart && aFirstEdge.myEnd < aSecondEdge.myEnd);
+						};
+
+						const auto sameEdges = [](auto& aFirstEdge, auto& aSecondEdge)
+						{
+							return aFirstEdge.myStart == aSecondEdge.myStart && aFirstEdge.myEnd == aSecondEdge.myEnd;
+						};
+
+						for (const auto& edge : lowerEnvelope)
+						{
+							CGAL_precondition(edge.myType != EdgeType::LINE);
+
+							if (edge.myType == EdgeType::SEGMENT ||
+								edge.myType == EdgeType::HALF_EDGE_SF)
+							{
+								uniquePoints.emplace_back(edge.myStart);
+
+								Edge<Point3> newEdge;
+								newEdge.myType = edge.myType;
+								newEdge.myLowestLeftPlane = edge.myLowestLeftPlane;
+								newEdge.myStart = edge.myStart;
+								newEdge.myEnd = edge.myEnd;
+
+								if (newEdge.myType == EdgeType::SEGMENT)
+								{
+									if (newEdge.myStart > newEdge.myEnd)
+									{
+										std::swap(newEdge.myStart, newEdge.myEnd);
+									}
+									uniquePoints.emplace_back(edge.myEnd);
+								}
+								uniqueEdges.emplace_back(newEdge);
+							}
+						}
+
+						std::sort(uniquePoints.begin(), uniquePoints.end());
+						std::sort(uniqueEdges.begin(), uniqueEdges.end(), sortEdges);
+						uniquePoints.erase(std::unique(uniquePoints.begin(), uniquePoints.end()), uniquePoints.end());
+						uniqueEdges.erase(std::unique(uniqueEdges.begin(), uniqueEdges.end(), sameEdges), uniqueEdges.end());
+					}
+
+					const LinearMapToScreen mapping{ uniquePoints, width, height };
+
+					for (const auto& point : uniquePoints)
+					{
+						const auto& vertexPosition = mapping.MapPointToScreen(Point2{ point.x(), point.y() });
+						positions.emplace_back(vertexPosition);
+					}
+
+					for (const auto& edge : uniqueEdges)
+					{
+						const auto& startPosition = mapping.MapPointToScreen(Point2{ edge.myStart.x(), edge.myStart.y() });
+						edges.emplace_back(sf::Vertex{ startPosition });
+
+						if (edge.myType == EdgeType::SEGMENT)
+						{
+							const auto& endPosition = mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
+							edges.emplace_back(sf::Vertex{ endPosition });
+						}
+						else
+						{
+							const auto& infiniteVertexPosition =
+								mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
+							constexpr auto distance = 10000.f;
+							edges.emplace_back(sf::Vertex{ sf::Vector2f{ infiniteVertexPosition - startPosition }.normalized() * distance +
+								startPosition });
 						}
 					}
-					else
-					{
-						CGAL_precondition(someVertices[i].mySortedNeighboursIndices.size() == 1);
-						// Normalization is safe because the point at infinity is always far
-						const auto neighbourIndex = someVertices[i].mySortedNeighboursIndices.front();
-						const auto& finiteVertexPosition =
-							mapping.MapPointToScreen(Point2{ someVertices[neighbourIndex].myPoint.x(), someVertices[neighbourIndex].myPoint.y() });
-						const auto& infiniteVertexPosition =
-							mapping.MapPointToScreen(Point2{ someVertices[i].myPoint.x(), someVertices[i].myPoint.y() });
-						constexpr auto distance = 10000.f;
-						positions.push_back(sf::Vector2f{ infiniteVertexPosition - finiteVertexPosition }.normalized() * distance + 
-							finiteVertexPosition);
-					}
-				}
-				for (const auto& edge : uniqueEdges)
-				{
-					edges.push_back(sf::Vertex{ positions[edge.first] });
-					edges.push_back(sf::Vertex{ positions[edge.second] });
 				}
 			}
 			else
 			{
-				CGAL_precondition(((someVertices.size() == 0) || (someVertices.size() == 1 && someVertices.front().myType == VertexType::INFINITE)));
+				CGAL_precondition(std::holds_alternative<int>(aLowerEnvelope));
 			}
 
 			sf::ContextSettings settings;
@@ -202,7 +229,7 @@ namespace SPGMT
 					window.draw(&edges[0], edges.size(), sf::PrimitiveType::Lines);
 				}
 
-				if (positions.size() > 2)
+				if (positions.size() > 0)
 				{
 					for (const auto& position : positions)
 					{

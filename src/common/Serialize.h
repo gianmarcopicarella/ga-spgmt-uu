@@ -23,7 +23,7 @@ namespace SPGMT
 		//typedef CGAL::Nth_of_tuple_property_map<0, SerializableFace> FaceTypeMap;
 		//typedef CGAL::Nth_of_tuple_property_map<1, SerializableFace> VertexIndicesMap;
 		//typedef CGAL::Nth_of_tuple_property_map<2, SerializableFace> PlaneIndexMap;
-
+		/*
 		void SerializeLowerEnvelope(const std::string& aPathToFile, const std::vector<Vertex>& someVertices)
 		{
 			std::vector<SerializableVertex> vertices;
@@ -79,5 +79,6 @@ namespace SPGMT
 
 			return result;
 		}
+		*/
 	}
 }

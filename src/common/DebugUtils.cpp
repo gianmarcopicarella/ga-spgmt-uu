@@ -12,7 +12,7 @@ namespace SPGMT
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ 3429112288/*3222535971*//*1306513302*//*4169948633*/ };
+		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/ };
 		return rand;
 	}
 
@@ -101,15 +101,143 @@ namespace SPGMT
 			}
 			return items;
 		}
+
+		Point2 locProjectXY(const SPGMT::Point3& aPoint)
+		{
+			return SPGMT::Point2{ aPoint.x(), aPoint.y() };
+		}
 	}
 
 	namespace Debug
 	{
-		Envelope_diagram_2 GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes)
+		bool IsLowerEnvelopeCorrect(const SPGMT::LowerEnvelope3d& aLowerEnvelope, const std::vector<SPGMT::Plane>& somePlanes)
 		{
-			Envelope_diagram_2      min_diag;
-			CGAL::lower_envelope_3(somePlanes.begin(), somePlanes.end(), min_diag);
-			return min_diag;
+			auto isValid{ false };
+
+			if (std::holds_alternative<std::monostate>(aLowerEnvelope))
+			{
+				CGAL_precondition(somePlanes.empty());
+				isValid = true;
+				return isValid;
+			}
+
+			Envelope_diagram_2 expectedLE;
+			CGAL::lower_envelope_3(somePlanes.begin(), somePlanes.end(), expectedLE);
+			CGAL_precondition(expectedLE.is_valid());
+
+			if (expectedLE.number_of_unbounded_faces() == 1 && expectedLE.number_of_faces() == 1)
+			{
+				CGAL_precondition(std::holds_alternative<int>(aLowerEnvelope));
+				const auto lowestPlane = expectedLE.faces_begin()->surfaces_begin()->plane();
+				const auto planeIter = std::find(somePlanes.begin(), somePlanes.end(), lowestPlane);
+				CGAL_precondition(std::distance(somePlanes.begin(), planeIter) == std::get<int>(aLowerEnvelope));
+				isValid = true;
+			}
+			else
+			{
+				using EdgesList = std::vector<SPGMT::Edge<SPGMT::Point3>>;
+				CGAL_precondition(std::holds_alternative<EdgesList>(aLowerEnvelope));
+				const auto edges = std::get<EdgesList>(aLowerEnvelope);
+
+				if (expectedLE.number_of_faces() == 2)
+				{
+					CGAL_precondition(expectedLE.number_of_unbounded_faces() == 2);
+					CGAL_precondition(edges.size() == 2);
+					CGAL_precondition(
+						edges.front().myType == EdgeType::LINE &&
+						edges.back().myType == EdgeType::LINE);
+					for (auto fit = expectedLE.faces_begin(); fit != expectedLE.faces_end(); ++fit)
+					{
+						const auto& curveCCB = fit->outer_ccb();
+						if (curveCCB->is_fictitious()) continue;
+						const auto& curve = curveCCB->curve();
+						CGAL_precondition(curve.is_line());
+						const auto line = curve.line();
+						const auto hasStartsOnLine = 
+							line.has_on(locProjectXY(edges[0].myStart)) && line.has_on(locProjectXY(edges[1].myStart));
+						const auto hasEndsOnLine = 
+							line.has_on(locProjectXY(edges[0].myEnd)) && line.has_on(locProjectXY(edges[1].myEnd));
+						CGAL_postcondition(hasStartsOnLine);
+						CGAL_postcondition(hasEndsOnLine);
+					}
+					isValid = true;
+				}
+				else
+				{
+					using VertexIter = Envelope_diagram_2::Vertex_const_iterator;
+					using HalfEdgeCwIter = typename Envelope_diagram_2::Halfedge_around_vertex_const_circulator;
+
+					const auto isAlongRay = [&](const auto& aRay, const auto& anEdge) { return aRay.has_on(locProjectXY(anEdge.myEnd)); };
+					const auto isEndpoint = [&](const auto& aPoint, const auto& anEdge) { return aPoint == locProjectXY(anEdge.myEnd); };
+					const auto findStartIter = [&](const auto& aPoint, const auto& anEdge) { return aPoint == locProjectXY(anEdge.myStart); };
+					const auto findEndIter = [&](const auto& aPoint, const auto& anEdge) { return !findStartIter(aPoint, anEdge); };
+
+					// Counts only finite vertices
+					size_t uniqueVerticesCount = 0;
+					{
+						std::vector<Edge<Point3>> segments;
+						std::copy_if(edges.begin(), edges.end(), std::back_inserter(segments),
+							[](const auto& anEdge) { return anEdge.myType == EdgeType::SEGMENT || anEdge.myType == EdgeType::HALF_EDGE_SF; });
+						std::vector<Point2> vertices;
+						for (const auto& s : segments)
+						{
+							vertices.emplace_back(locProjectXY(s.myStart));
+							if (s.myType == EdgeType::SEGMENT)
+							{
+								vertices.emplace_back(locProjectXY(s.myEnd));
+							}
+						}
+						std::sort(vertices.begin(), vertices.end());
+						uniqueVerticesCount = std::unique(vertices.begin(), vertices.end()) - vertices.begin();
+					}
+
+					CGAL_precondition(uniqueVerticesCount == expectedLE.number_of_vertices());
+
+					for (VertexIter it = expectedLE.vertices_begin();
+						it != expectedLE.vertices_end(); ++it)
+					{
+						HalfEdgeCwIter neighbourIt = it->incident_halfedges();
+						const auto neighboursStartIter = std::find_if(edges.begin(), edges.end(),
+							std::bind(findStartIter, it->point(), std::placeholders::_1));
+						const auto neighboursEndIter = std::find_if(neighboursStartIter, edges.end(),
+							std::bind(findEndIter, it->point(), std::placeholders::_1));
+						std::unordered_set<int> visitedNeighbours;
+						do
+						{
+							const auto& halfEdgeCurve = neighbourIt->ccb()->curve();
+							EdgesList::const_iterator neighbourIter = neighboursEndIter;
+
+							if (halfEdgeCurve.is_segment())
+							{
+								const auto& segment = halfEdgeCurve.segment();
+								const auto endPoint = it->point() == segment.start() ? segment.target() : segment.start();
+								neighbourIter =
+									std::find_if(neighboursStartIter, neighboursEndIter,
+										std::bind(isEndpoint, endPoint, std::placeholders::_1));
+							}
+							else if (halfEdgeCurve.is_ray())
+							{
+								neighbourIter =
+									std::find_if(neighboursStartIter, neighboursEndIter,
+										std::bind(isAlongRay, halfEdgeCurve.ray(), std::placeholders::_1));
+							}
+							else
+							{
+								CGAL_precondition(false);
+							}
+							CGAL_precondition(neighbourIter != neighboursEndIter);
+							const auto neighbourIndex = std::distance(neighboursStartIter, neighbourIter);
+							CGAL_precondition(visitedNeighbours.find(neighbourIndex) == visitedNeighbours.end());
+							visitedNeighbours.insert(neighbourIndex);
+
+						} while (++neighbourIt != it->incident_halfedges());
+						const auto neighboursCount = std::distance(neighboursStartIter, neighboursEndIter);
+						CGAL_postcondition(visitedNeighbours.size() == neighboursCount);
+					}
+				}
+				isValid = true;
+			}
+			return isValid;
 		}
 
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount)

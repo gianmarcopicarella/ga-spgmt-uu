@@ -22,8 +22,8 @@ namespace SPGMT
 			std::vector<Point3> mySamples;
 			int myPositiveCount{ 0 }, myNegativeCount{ 0 }, myOverSurfaceCount{ 0 };
 		};
-		
-		Envelope_diagram_2 GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes);
+		bool IsLowerEnvelopeCorrect(const SPGMT::LowerEnvelope3d& aLowerEnvelope, const std::vector<SPGMT::Plane>& somePlanes);
+		//LowerEnvelope2d GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes);
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount);
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount);
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount);

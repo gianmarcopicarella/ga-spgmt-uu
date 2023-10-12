@@ -1,12 +1,11 @@
 #pragma once
 
-#include <vector>
+#include "BruteForce.h"
 
 namespace SPGMT
 {
-	struct Vertex;
 	namespace Visualization 
 	{
-		void VisualizeLowerEnvelope(const std::vector<Vertex>& someVertices);
+		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
 	}
 }

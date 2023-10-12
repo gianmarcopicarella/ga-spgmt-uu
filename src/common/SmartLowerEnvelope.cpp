@@ -1,6 +1,5 @@
 #include "SmartLowerEnvelope.h"
 
-#include "BruteForce.h"
 #include "BatchPointLocation.h"
 #include "Utils.h"
 
@@ -22,7 +21,7 @@ namespace SPGMT
 			CGAL_postcondition(firstEdgeEntry->second.size() < 3);
 		}
 
-		std::vector<Vertex> locRecursiveLowerEnvelope(
+		LowerEnvelope3d locRecursiveLowerEnvelope(
 			const std::vector<Plane>& somePlanes, 
 			const std::vector<int>& somePlanesFromBase,
 			const std::vector<int>& someSampledPlanesFromBase)
@@ -44,11 +43,11 @@ namespace SPGMT
 			}
 
 			// Compute lower envelope and triangles
-			std::vector<Plane> planes;
+			/*std::vector<Plane> planes;
 			std::transform(currentSampledPlanesFromBase.begin(), currentSampledPlanesFromBase.end(),
 				std::back_inserter(planes), [&somePlanes](const auto& aPlaneIdx) { return somePlanes[aPlaneIdx]; });
 			const auto& lowerEnvelope = ComputeLowerEnvelope(planes);
-
+			
 			if (lowerEnvelope.size() == 1)
 			{
 				CGAL_precondition(lowerEnvelope.front().myType == VertexType::INFINITE);
@@ -69,10 +68,10 @@ namespace SPGMT
 				std::transform(somePlanesFromBase.begin(), somePlanesFromBase.end(), std::back_inserter(dualizedPlanes), planeToPointDuality);
 
 				const auto& locationResult = BatchPointLocation(dualizedPoints, dualizedPlanes);
-			}
+			}*/
 
 			// TEMPORARY RETURN
-			return std::vector<Vertex>{};
+			return LowerEnvelope3d{};
 
 
 			// 1. Edge case) If there is just one line with both ends at infinity
@@ -94,7 +93,7 @@ namespace SPGMT
 		}
 	}
 
-	std::vector<Vertex> ComputeLowerEnvelopeSmart(const std::vector<Plane>& somePlanes)
+	LowerEnvelope3d ComputeLowerEnvelopeSmart(const std::vector<Plane>& somePlanes)
 	{
 		// If the input size is within a maximum threshold 
 		// then use the brute force algorithm
@@ -112,30 +111,5 @@ namespace SPGMT
 		const auto& sampledPlanesIndices = SampleWithProbability(allPlanesIndices, samplingProbability);
 
 		return locRecursiveLowerEnvelope(somePlanes, allPlanesIndices, sampledPlanesIndices);
-	}
-
-	TriangulationData TriangulateLowerEnvelopeFaces(const std::vector<Face>& someFaces)
-	{
-		CGAL_precondition(someFaces.size() > 0);
-		TriangulationData result;
-		for (int i = 0; i < someFaces.size(); ++i)
-		{
-			const auto& vertexIndices = someFaces[i].myVertexIndices;
-			CGAL_precondition(vertexIndices.size() > 0);
-			const auto sourceVertexIdx = vertexIndices.front();
-			// The triangulation is guaranteed to be CCW because the first and second vertices always bound the face to their left
-			// So every triangulation will pick the vertices in CCW order by design
-			for(int k = 1; k < vertexIndices.size() - 1; ++k)
-			{
-				result.myVerticesIndices.push_back(sourceVertexIdx);
-				result.myVerticesIndices.push_back(vertexIndices[k]);
-				result.myVerticesIndices.push_back(vertexIndices[k + 1]);
-				const auto triangleIndex = result.myVerticesIndices.size() / 3;
-				locUpdateTrianglesLocalityMap(sourceVertexIdx, vertexIndices[k], triangleIndex, result.myTrianglesIndicesAtEdge);
-				locUpdateTrianglesLocalityMap(vertexIndices[k], vertexIndices[k + 1], triangleIndex, result.myTrianglesIndicesAtEdge);
-				locUpdateTrianglesLocalityMap(vertexIndices[k + 1], sourceVertexIdx, triangleIndex, result.myTrianglesIndicesAtEdge);
-			}
-		}
-		return result;
 	}
 }

@@ -6,49 +6,6 @@ namespace SPGMT
 {
 	namespace
 	{
-		template<typename T>
-		bool locAreItemsUnique(const std::vector<T>& someItems)
-		{
-			auto areItemsUnique{ true };
-			for (int i = 0; i < someItems.size() && areItemsUnique; ++i)
-			{
-				for (int k = i + 1; k < someItems.size(); ++k)
-				{
-					if (someItems[i] == someItems[k])
-					{
-						areItemsUnique = false;
-						break;
-					}
-				}
-			}
-			return areItemsUnique;
-		}
-		bool locArePlanesNonVertical(const std::vector<Plane>& somePlanes)
-		{
-			const Vec3 up{ 0,0,1 };
-			const FT zero{ 0 };
-			auto arePlanesNonVertical{ true };
-			for (int i = 0; i < somePlanes.size() && arePlanesNonVertical; ++i)
-			{
-				arePlanesNonVertical =
-					CGAL::scalar_product(somePlanes[i].orthogonal_vector(), up) != zero;
-			}
-			return arePlanesNonVertical;
-		}
-		bool locArePlanesUniformlyOrientedUp(const std::vector<Plane>& somePlanes)
-		{
-			const Vec3 up{ 0, 0, 1 };
-			const FT zero{ 0 };
-			auto isPointingUp{ false };
-			for (auto& plane : somePlanes)
-			{
-				const auto dot = CGAL::scalar_product(up, plane.orthogonal_vector());
-				// Cannot handle vertical planes
-				CGAL_precondition(dot != zero);
-				isPointingUp |= dot > zero;
-			}
-			return isPointingUp;
-		}
 		int locGetLowestPlaneAtOrigin(const std::vector<Plane>& somePlanes, const Point3& aPoint = Point3{ 0,0,0 })
 		{
 			CGAL_precondition(somePlanes.size() > 0);
@@ -115,25 +72,28 @@ namespace SPGMT
 			std::vector<VertexData> myUniqueVertices;
 		};
 
-		int locFindLineIndex(const std::vector<LineData>& someLines, const Line3& aLine)
+		Point3 locProject(const Point3& aPoint)
 		{
-			const auto lineIter = std::find_if(someLines.begin(), someLines.end(), [&aLine](const auto& aLineData) {
-				return aLine == aLineData.myLine;
-				});
-
-			if (lineIter == someLines.end())
-			{
-				return -1;
-			}
-			else
-			{
-				return std::distance(someLines.begin(), lineIter);
-			}
+			return Point3{ aPoint.x(), aPoint.y(), 0 };
 		}
+
 		LinesAndVerticesData locComputeLinesAndVertices(const std::vector<Plane>& somePlanes)
 		{
-			LinesAndVerticesData result;
-			// Intersection lines computation
+			static const Point3 zero{ 0,0,0 };
+
+			struct LineWrapper
+			{
+				Point3 myPoint;
+				Dir3 myDir;
+				int myFirstPlane{ -1 }, mySecondPlane{ -1 };
+			};
+
+			std::cout << "START line computation" << std::endl;
+
+			const auto maximumLinesCount = somePlanes.size() * (somePlanes.size() - 1) / 2;
+			std::vector<LineWrapper> lines;
+			lines.reserve(maximumLinesCount);
+
 			for (int i = 0; i < somePlanes.size(); ++i)
 			{
 				for (int k = i + 1; k < somePlanes.size(); ++k)
@@ -143,23 +103,59 @@ namespace SPGMT
 					{
 						const Line3* line = boost::get<Line3>(&*intersection);
 						CGAL_precondition(line != nullptr);
-						auto lineIdx = locFindLineIndex(result.myUniqueLines, *line);
-						if (lineIdx == -1)
-						{
-							LineData data{ *line };
-							data.myPlanesIndices.push_back(i);
-							result.myUniqueLines.push_back(data);
-							lineIdx = result.myUniqueLines.size() - 1;
-						}
-						result.myUniqueLines[lineIdx].myPlanesIndices.push_back(k);
+						lines.emplace_back(LineWrapper{ line->projection(zero), line->direction(), i, k });
 					}
 				}
 			}
-			// End intersection lines computation
-			// Vertices computation
-			constexpr auto pointIndexPairCmp = [](auto& a, auto& b) { return a.myKey < b.myKey; };
-			struct PointIndexPair { Point3 myKey; size_t myIndex; };
-			std::set<PointIndexPair, decltype(pointIndexPairCmp)> uniqueVertices{ pointIndexPairCmp };
+
+			lines.shrink_to_fit();
+			const auto linesSort = [&](auto& aFirstWrapper, auto& aSecondWrapper)
+			{
+				return aFirstWrapper.myPoint < aSecondWrapper.myPoint ||
+					(aFirstWrapper.myPoint == aSecondWrapper.myPoint && aFirstWrapper.myDir == aSecondWrapper.myDir);
+			};
+			std::sort(lines.begin(), lines.end(), linesSort);
+
+			// Store unique lines
+			LinesAndVerticesData result;
+
+			if (lines.size() > 0)
+			{
+				Line3 uniqueLine{ lines.front().myPoint, lines.front().myDir };
+				result.myUniqueLines.emplace_back(LineData{ std::move(uniqueLine) });
+				result.myUniqueLines.back().myPlanesIndices.push_back(lines.front().myFirstPlane);
+				result.myUniqueLines.back().myPlanesIndices.push_back(lines.front().mySecondPlane);
+			}
+
+			for (const auto& line : lines)
+			{
+				Line3 maybeUniqueLine{ line.myPoint, line.myDir };
+				if (result.myUniqueLines.back().myLine != maybeUniqueLine)
+				{
+					result.myUniqueLines.emplace_back(LineData{ std::move(maybeUniqueLine) });
+				}
+				result.myUniqueLines.back().myPlanesIndices.push_back(line.myFirstPlane);
+				result.myUniqueLines.back().myPlanesIndices.push_back(line.mySecondPlane);
+			}
+
+			// unique lines stored
+
+			std::cout << "DONE line computation" << std::endl;
+			// -----------------------------------------------------
+
+
+			std::cout << "START vertices computation" << std::endl;
+			// store unique vertices
+			struct VertexWrapper
+			{
+				Point3 myPoint;
+				int myFirstLine{ -1 }, mySecondLine{ -1 };
+			};
+
+			const auto maximumVerticesCount = result.myUniqueLines.size() * (result.myUniqueLines.size() - 1) / 2;
+			std::vector<VertexWrapper> vertices;
+			vertices.reserve(maximumVerticesCount);
+
 			for (int i = 0; i < result.myUniqueLines.size(); ++i)
 			{
 				for (int k = i + 1; k < result.myUniqueLines.size(); ++k)
@@ -169,56 +165,66 @@ namespace SPGMT
 					{
 						const Point3* point = boost::get<Point3>(&*intersection);
 						CGAL_precondition(point != nullptr);
-						auto vertexIter = uniqueVertices.find(PointIndexPair{ *point });
-						if (vertexIter == uniqueVertices.end())
-						{
-							vertexIter = uniqueVertices.insert(PointIndexPair{ *point, result.myUniqueVertices.size() }).first;
-							result.myUniqueVertices.push_back(VertexData{ *point });
-							result.myUniqueLines[i].mySortedVerticesIndices.push_back(vertexIter->myIndex);
-						}
-						auto& verticesIndicesK = result.myUniqueLines[k].mySortedVerticesIndices;
-						if (std::find(verticesIndicesK.begin(), verticesIndicesK.end(), vertexIter->myIndex) == verticesIndicesK.end())
-						{
-							verticesIndicesK.push_back(vertexIter->myIndex);
-						}
+						vertices.emplace_back(VertexWrapper{ *point, i, k });
 					}
 				}
 			}
+
+			vertices.shrink_to_fit();
+			const auto verticesSort = [&](auto& aFirstWrapper, auto& aSecondWrapper)
+			{
+				return aFirstWrapper.myPoint < aSecondWrapper.myPoint;
+			};
+			std::sort(vertices.begin(), vertices.end(), verticesSort);
+
+			if (vertices.size() > 0)
+			{
+				result.myUniqueVertices.emplace_back(VertexData{ vertices.front().myPoint });
+				constexpr auto vertexIdx = 0;
+				result.myUniqueLines[vertices.front().myFirstLine].mySortedVerticesIndices.push_back(vertexIdx);
+				result.myUniqueLines[vertices.front().mySecondLine].mySortedVerticesIndices.push_back(vertexIdx);
+			}
+
+			for (auto& vertex : vertices)
+			{
+				if (result.myUniqueVertices.back().myPoint != vertex.myPoint)
+				{
+					result.myUniqueVertices.emplace_back(VertexData{ vertex.myPoint });
+				}
+
+				const auto vertexIdx = result.myUniqueVertices.size() - 1;
+				result.myUniqueLines[vertex.myFirstLine].mySortedVerticesIndices.push_back(vertexIdx);
+				result.myUniqueLines[vertex.mySecondLine].mySortedVerticesIndices.push_back(vertexIdx);
+			}
+			std::cout << "DONE vertices computation" << std::endl;
 			//End vertices computation
+			// 
+			// Keep only unique
+			std::cout << "START keep unique planes and vertices indices" << std::endl;
+
+			for (auto& line : result.myUniqueLines)
+			{
+				std::sort(line.myPlanesIndices.begin(), line.myPlanesIndices.end());
+				std::sort(line.mySortedVerticesIndices.begin(), line.mySortedVerticesIndices.end());
+				line.myPlanesIndices.erase(std::unique(line.myPlanesIndices.begin(), line.myPlanesIndices.end()), line.myPlanesIndices.end());
+				line.mySortedVerticesIndices.erase(std::unique(line.mySortedVerticesIndices.begin(), line.mySortedVerticesIndices.end()), line.mySortedVerticesIndices.end());
+			}
+
+			std::cout << "DONE keep unique planes and vertices indices" << std::endl;
 			return result;
 		}
 
-		void locSortClockWise(Vertex& anOutVertex, const std::vector<Vertex>& someVertices)
+		void locSortNeighboursCCW(
+			const std::vector<Edge<Point3>>::iterator aStartIter,
+			const std::vector<Edge<Point3>>::iterator anEndIter)
 		{
-			struct InternalWrapper
-			{
-				FT myAngle{ 0 };
-				int myVertexIdx{ -1 }, myPlaneIdx{ -1 };
-			};
-
-			std::vector<InternalWrapper> wrappers;
-
-			for (int i = 0; i < anOutVertex.mySortedNeighboursIndices.size(); ++i)
-			{
-				const auto lowestPlaneIdx = anOutVertex.myLowestLeftPlanes[i];
-				const auto targetVertexIdx = anOutVertex.mySortedNeighboursIndices[i];
-
-				const Vec3 segment{ anOutVertex.myPoint, someVertices[targetVertexIdx].myPoint };
-				const auto angleDegrees = CGAL::approximate_angle(Vec3{ 0,0,1 }, segment);
-
-				wrappers.push_back(InternalWrapper{ angleDegrees, targetVertexIdx, lowestPlaneIdx });
-			}
-
-			anOutVertex.mySortedNeighboursIndices.clear();
-			anOutVertex.myLowestLeftPlanes.clear();
-
-			std::sort(wrappers.begin(), wrappers.end(), [](auto& aFirst, auto& aSecond) {
-				return aFirst.myAngle > aSecond.myAngle;
-				});
-
-			std::for_each(wrappers.begin(), wrappers.end(), [&anOutVertex](auto& aWrapper) {
-				anOutVertex.mySortedNeighboursIndices.push_back(aWrapper.myVertexIdx);
-				anOutVertex.myLowestLeftPlanes.push_back(aWrapper.myPlaneIdx);
+			static const Vec3 ref{ 1, 0, 0 };
+			std::sort(aStartIter, anEndIter,
+				[&](auto& aFirst, auto& aSecond) {
+					CGAL_precondition(aFirst.myStart == aSecond.myStart);
+					const auto firstAngle = CGAL::approximate_angle(ref, Vec3{ aFirst.myStart, aFirst.myEnd });
+					const auto secondAngle = CGAL::approximate_angle(ref, Vec3{ aFirst.myStart, aSecond.myEnd });
+					return firstAngle < secondAngle;
 				});
 		}
 
@@ -275,60 +281,61 @@ namespace SPGMT
 				return Vec3{ b, a };
 			}
 		}
-
-		std::vector<int> locTraversePlaneEdges(const std::vector<Vertex>& someVertices, const int aStartingVertexIdx, const int aPlaneIdx)
+		
+		std::vector<Point3> locTriangulateConvexFace(
+			const std::vector<Edge<Point3>>::iterator aStartIter,
+			const std::vector<Edge<Point3>>::iterator anEndIter)
 		{
-			std::vector<int> result;
-			int currentVertexIdx = aStartingVertexIdx;
-			while (currentVertexIdx > -1)
+			std::vector<Point3> vertices;
+
+			CGAL_precondition(std::distance(aStartIter, anEndIter) > 1);
+
+			// The triangulation is guaranteed to be CCW because the first and second vertices always bound the face to their left
+			// So every triangulation will pick the vertices in CCW order by design
+			for (auto it = aStartIter + 1; it != anEndIter; ++it)
 			{
-				result.push_back(currentVertexIdx);
-				const auto& vertex = someVertices[currentVertexIdx];
-				currentVertexIdx = -1;
-				for (int i = 0; i < vertex.myLowestLeftPlanes.size(); ++i)
+				if (aStartIter->myStart == it->myEnd)
 				{
-					if (vertex.myLowestLeftPlanes[i] == aPlaneIdx &&
-						vertex.mySortedNeighboursIndices[i] != aStartingVertexIdx)
-					{
-						currentVertexIdx = vertex.mySortedNeighboursIndices[i];
-						break;
-					}
+#ifndef NDEBUG
+					const auto isBoundedFace = aStartIter->myType == EdgeType::SEGMENT;
+					CGAL_postcondition(isBoundedFace);
+#endif			
+					continue;
 				}
+
+				vertices.emplace_back(aStartIter->myStart);
+				vertices.emplace_back(it->myStart);
+				vertices.emplace_back(it->myEnd);
+#ifndef NDEBUG
+				{
+					std::vector<Point2> vertices2d;
+					vertices2d.emplace_back(Point2{ aStartIter->myStart.x(), aStartIter->myStart.y() });
+					vertices2d.emplace_back(Point2{ it->myStart.x(), it->myStart.y() });
+					vertices2d.emplace_back(Point2{ it->myEnd.x(), it->myEnd.y() });
+					CGAL_postcondition(CGAL::orientation_2(vertices2d.begin(), vertices2d.end()) == CGAL::Orientation::COUNTERCLOCKWISE);
+				}
+#endif
 			}
-			CGAL_postcondition(result.size() > 1);
-			return result;
+#ifndef NDEBUG
+			const auto isUnboundedFace = aStartIter->myType != EdgeType::SEGMENT;
+			const auto edgesCount = std::distance(aStartIter, anEndIter) + (isUnboundedFace ? 1 : 0);
+			CGAL_postcondition((vertices.size() / 3) == edgesCount - 2);
+#endif
+			return vertices;
 		}
-
-		bool locFaceSanityCheck(const std::vector<Vertex>& someVertices, const Face& aFace)
-		{
-			CGAL_precondition(aFace.myType != FaceType::UNBOUNDED_ONE_EDGE);
-			std::vector<Point2> points;
-			for (const auto vertexIdx : aFace.myVertexIndices)
-			{
-				const auto& currVertex = someVertices[vertexIdx];
-				points.push_back(Point2{ currVertex.myPoint.x(), currVertex.myPoint.y() });
-			}
-
-			CGAL_postcondition(CGAL::orientation_2(points.begin(), points.end()) == CGAL::Orientation::COUNTERCLOCKWISE);
-			CGAL_postcondition(CGAL::is_simple_2(points.begin(), points.end()));
-			return CGAL::is_convex_2(points.begin(), points.end());
-		}
-
 	}
 
-	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
+	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
 	{
-		std::vector<Vertex> result;
-
 		if (somePlanes.empty())
 		{
-			return result;
+			return LowerEnvelope3d{};
 		}
 
 		// Requirements check
-		CGAL_precondition(locAreItemsUnique(somePlanes));
-		CGAL_precondition(locArePlanesNonVertical(somePlanes));
-		CGAL_precondition(locArePlanesUniformlyOrientedUp(somePlanes));
+		CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
+		//CGAL_precondition(locArePlanesUniformlyOrientedUp(somePlanes));
 
 		auto& linesVerticesData = locComputeLinesAndVertices(somePlanes);
 
@@ -337,11 +344,10 @@ namespace SPGMT
 		{
 			const auto lowestPlaneIndex = locGetLowestPlaneAtOrigin(somePlanes);
 			CGAL_precondition(lowestPlaneIndex != -1);
-			Vertex infinity{ VertexType::INFINITE };
-			infinity.myLowestLeftPlanes.push_back(lowestPlaneIndex);
-			result.push_back(infinity);
-			return result;
+			return lowestPlaneIndex;
 		}
+
+		std::vector<Edge<Point3>> edges;
 
 		// Edge case: no triple of planes intersect
 		if (linesVerticesData.myUniqueVertices.empty())
@@ -353,31 +359,29 @@ namespace SPGMT
 				if (locIsVertexInLowerEnvelope(somePlanes, currentLinePoint))
 				{
 					constexpr auto distance = 1000.f;
-					Vertex start, end;
+					static const Point3 zero{ 0,0,0 };
 
-					start.myPoint = currentLineData.myLine.point();
-					start.mySortedNeighboursIndices.push_back(1);
-					start.myType = VertexType::INFINITE;
+					Edge<Point3> firstEdge;
+					firstEdge.myStart = currentLineData.myLine.projection(zero);
+					firstEdge.myEnd = firstEdge.myStart + currentLineData.myLine.to_vector() * distance;
+					firstEdge.myType = EdgeType::LINE;
+					firstEdge.myLowestLeftPlane =
+						locMinSteepPlaneIndexThroughSegment(firstEdge.myStart, firstEdge.myEnd, somePlanes, currentLineData.myPlanesIndices);
 
-					end.myPoint = start.myPoint + currentLineData.myLine.to_vector() * distance;
-					end.mySortedNeighboursIndices.push_back(0);
-					end.myType = VertexType::INFINITE;
+					Edge<Point3> secondEdge;
+					secondEdge.myStart = firstEdge.myEnd;
+					secondEdge.myEnd = firstEdge.myStart;
+					secondEdge.myType = EdgeType::LINE;
+					secondEdge.myLowestLeftPlane =
+						locMinSteepPlaneIndexThroughSegment(secondEdge.myStart, secondEdge.myEnd, somePlanes, currentLineData.myPlanesIndices);
 
-					const auto minLeftPlaneIdx =
-						locMinSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLineData.myPlanesIndices);
+					edges.emplace_back(firstEdge);
+					edges.emplace_back(secondEdge);
 
-					const auto minRightPlaneIdx =
-						locMinSteepPlaneIndexThroughSegment(end.myPoint, start.myPoint, somePlanes, currentLineData.myPlanesIndices);
-
-					start.myLowestLeftPlanes.push_back(minLeftPlaneIdx);
-					end.myLowestLeftPlanes.push_back(minRightPlaneIdx);
-
-					result.push_back(start);
-					result.push_back(end);
 					break;
 				}
 			}
-			return result;
+			return edges;
 		}
 
 		// Base case
@@ -409,10 +413,6 @@ namespace SPGMT
 		}
 
 		// Construct result
-		constexpr auto pointIndexPairCmp = [](auto& a, auto& b) { return a.myKey < b.myKey; };
-		struct PointIndexPair { Point3 myKey; size_t myIndex; };
-		std::set<PointIndexPair, decltype(pointIndexPairCmp)> uniqueVertices{ pointIndexPairCmp };
-
 		for (int i = 0; i < linesVerticesData.myUniqueLines.size(); ++i)
 		{
 			auto& currentLine = linesVerticesData.myUniqueLines[i];
@@ -441,135 +441,113 @@ namespace SPGMT
 					const auto& startVertex = linesVerticesData.myUniqueVertices[segmentStartIdx];
 					const auto& endVertex = linesVerticesData.myUniqueVertices[segmentEndIdx];
 
-					auto startIter = uniqueVertices.find(PointIndexPair{ startVertex.myPoint });
-					auto endIter = uniqueVertices.find(PointIndexPair{ endVertex.myPoint });
+					Edge<Point3> edge, oppositeEdge;
 
-					if (startIter == uniqueVertices.end())
+					if (startVertex.myIsAtInfinity && endVertex.myIsAtInfinity)
 					{
-						startIter = uniqueVertices.insert(PointIndexPair{ startVertex.myPoint, uniqueVertices.size() }).first;
-						Vertex start;
-						start.myPoint = startIter->myKey;
-						start.myType = startVertex.myIsAtInfinity ? VertexType::INFINITE : VertexType::FINITE;
-						result.push_back(start);
+						edge.myType = EdgeType::LINE;
+						oppositeEdge.myType = EdgeType::LINE;
+					}
+					else if (!startVertex.myIsAtInfinity && endVertex.myIsAtInfinity)
+					{
+						edge.myType = EdgeType::HALF_EDGE_SF;
+						oppositeEdge.myType = EdgeType::HALF_EDGE_EF;
+					}
+					else if (startVertex.myIsAtInfinity && !endVertex.myIsAtInfinity)
+					{
+						edge.myType = EdgeType::HALF_EDGE_EF;
+						oppositeEdge.myType = EdgeType::HALF_EDGE_SF;
+					}
+					else
+					{
+						edge.myType = EdgeType::SEGMENT;
+						oppositeEdge.myType = EdgeType::SEGMENT;
 					}
 
-					if (endIter == uniqueVertices.end())
-					{
-						endIter = uniqueVertices.insert(PointIndexPair{ endVertex.myPoint, uniqueVertices.size() }).first;
-						Vertex end;
-						end.myPoint = endIter->myKey;
-						end.myType = endVertex.myIsAtInfinity ? VertexType::INFINITE : VertexType::FINITE;
-						result.push_back(end);
-					}
+					edge.myStart = startVertex.myPoint;
+					edge.myEnd = endVertex.myPoint;
+					edge.myLowestLeftPlane =
+						locMinSteepPlaneIndexThroughSegment(edge.myStart, edge.myEnd, somePlanes, currentLine.myPlanesIndices);
 
-					auto& start = result[startIter->myIndex];
-					auto& end = result[endIter->myIndex];
+					oppositeEdge.myStart = endVertex.myPoint;
+					oppositeEdge.myEnd = startVertex.myPoint;
+					oppositeEdge.myLowestLeftPlane =
+						locMinSteepPlaneIndexThroughSegment(oppositeEdge.myStart, oppositeEdge.myEnd, somePlanes, currentLine.myPlanesIndices);
 
-					const auto minLeftPlaneIdx =
-						locMinSteepPlaneIndexThroughSegment(start.myPoint, end.myPoint, somePlanes, currentLine.myPlanesIndices);
-
-					const auto minRightPlaneIdx =
-						locMinSteepPlaneIndexThroughSegment(end.myPoint, start.myPoint, somePlanes, currentLine.myPlanesIndices);
-
-					start.mySortedNeighboursIndices.push_back(endIter->myIndex);
-					start.myLowestLeftPlanes.push_back(minLeftPlaneIdx);
-
-					end.mySortedNeighboursIndices.push_back(startIter->myIndex);
-					end.myLowestLeftPlanes.push_back(minRightPlaneIdx);
+					edges.emplace_back(edge);
+					edges.emplace_back(oppositeEdge);
 
 					segmentStartIdx = -1;
 				}
 			}
 		}
 
-		// Sort each edge counter-clock wise
-		for (int i = 0; i < result.size(); ++i)
+		const auto sortEdges = [](auto& aFirstEdge, auto& aSecondEdge)
 		{
-			locSortClockWise(result[i], result);
+			return aFirstEdge.myStart < aSecondEdge.myStart;
+		};
 
-			// Set vertex to infinity if it has only one edge
-			if (result[i].mySortedNeighboursIndices.size() == 1)
+		std::sort(edges.begin(), edges.end(), sortEdges);
+
+		auto iterStart = edges.begin();
+
+		for (auto iter = edges.begin(); iter != edges.end(); ++iter)
+		{
+			if (iterStart->myStart != iter->myStart)
 			{
-				result[i].myType = VertexType::INFINITE;
+				locSortNeighboursCCW(iterStart, iter);
+				iterStart = iter;
 			}
+		}
+
+		locSortNeighboursCCW(iterStart, edges.end());
+
+		return edges;
+	}
+
+	Triangles3d TriangulateLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope)
+	{
+		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope));
+
+		if (!std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope))
+		{
+			return Triangles3d{};
+		}
+
+		auto edges = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
+		CGAL_precondition(edges.size() > 2);
+
+		if (edges.size() < 3)
+		{
+			return Triangles3d{};
+		}
+
+		const auto sortEdges = [](auto& aFirstEdge, auto& aSecondEdge)
+		{
+			return aFirstEdge.myLowestLeftPlane < aSecondEdge.myLowestLeftPlane ||
+				(aFirstEdge.myLowestLeftPlane == aSecondEdge.myLowestLeftPlane && aFirstEdge.myType < aSecondEdge.myType);
+		};
+
+		std::sort(edges.begin(), edges.end(), sortEdges);
+		std::vector<Point3> result;
+		auto boundaryStartIt = edges.begin();
+		
+		for (auto it = edges.begin(); it != edges.end(); ++it)
+		{
+			if (boundaryStartIt->myLowestLeftPlane != it->myLowestLeftPlane)
+			{
+				// Triangles building function
+				const auto& faceTriangles = locTriangulateConvexFace(boundaryStartIt, it);
+				result.insert(result.end(), faceTriangles.begin(), faceTriangles.end());
+				boundaryStartIt = it;
+			}
+		}
+
+		{
+			const auto& faceTriangles = locTriangulateConvexFace(boundaryStartIt, edges.end());
+			result.insert(result.end(), faceTriangles.begin(), faceTriangles.end());
 		}
 
 		return result;
-	}
-
-	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices)
-	{
-		std::vector<Face> faces;
-
-		// Edge case happening when the entire lower envelope has one single infinite face
-		if (someVertices.size() == 1 && someVertices.front().myType == VertexType::INFINITE)
-		{
-			Face singleFace;
-			singleFace.myPlaneIndex = someVertices.front().myLowestLeftPlanes.front();
-			singleFace.myType = FaceType::UNBOUNDED;
-			faces.push_back(singleFace);
-			return faces;
-		}
-
-		std::set<int> collectedFaces;
-
-		for (int i = 0; i < someVertices.size(); ++i)
-		{
-			const auto& vertex = someVertices[i];
-			if (vertex.myType == VertexType::INFINITE)
-			{
-				// Trivial requirements
-				CGAL_precondition(vertex.myLowestLeftPlanes.size() == 1);
-				CGAL_precondition(vertex.mySortedNeighboursIndices.size() == 1);
-
-				Face face;
-
-				face.myPlaneIndex = vertex.myLowestLeftPlanes.front();
-				face.myVertexIndices = locTraversePlaneEdges(someVertices, i, vertex.myLowestLeftPlanes.front());
-
-				if (face.myVertexIndices.size() == 2)
-				{
-					face.myType = FaceType::UNBOUNDED_ONE_EDGE;
-				}
-				else
-				{
-					const auto& lastVertexNeighbours = someVertices[face.myVertexIndices.back()].mySortedNeighboursIndices;
-					const auto isBoundaryOpen = std::find(lastVertexNeighbours.begin(), lastVertexNeighbours.end(),
-						face.myVertexIndices.front()) == lastVertexNeighbours.end();
-					if (isBoundaryOpen)
-					{
-						face.myType = FaceType::UNBOUNDED;
-					}
-					CGAL_postcondition(locFaceSanityCheck(someVertices, face));
-				}
-
-				collectedFaces.insert(face.myPlaneIndex);
-				faces.push_back(face);
-			}
-		}
-
-		for (int i = 0; i < someVertices.size(); ++i)
-		{
-			const auto& vertex = someVertices[i];
-			if (vertex.myType == VertexType::FINITE)
-			{
-				for (int j = 0; j < vertex.myLowestLeftPlanes.size(); ++j)
-				{
-					const auto planeIdx = vertex.myLowestLeftPlanes[j];
-					if (collectedFaces.find(planeIdx) == collectedFaces.end())
-					{
-						Face face;
-						face.myPlaneIndex = planeIdx;
-						face.myVertexIndices = locTraversePlaneEdges(someVertices, i, planeIdx);
-						
-						CGAL_postcondition(locFaceSanityCheck(someVertices, face));
-						
-						faces.push_back(face);
-						collectedFaces.insert(planeIdx);
-					}
-				}
-			}
-		}
-		return faces;
 	}
 }

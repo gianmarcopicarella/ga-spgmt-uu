@@ -1,7 +1,7 @@
 #pragma once
 
-//#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
-#include <CGAL/Exact_predicates_exact_constructions_kernel_with_sqrt.h>
+#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+//#include <CGAL/Exact_predicates_exact_constructions_kernel_with_sqrt.h>
 #include <CGAL/Point_set_3.h>
 #include <CGAL/Point_3.h>
 #include <CGAL/Point_2.h>
@@ -37,8 +37,8 @@ namespace SPGMT
     typedef Kernel::Point_2 Point2;
     typedef Kernel::Vector_2 Vec2;*/
 
-    typedef CGAL::Exact_predicates_exact_constructions_kernel_with_sqrt Kernel;
-    //typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
+    //typedef CGAL::Exact_predicates_exact_constructions_kernel_with_sqrt Kernel;
+    typedef CGAL::Exact_predicates_exact_constructions_kernel Kernel;
     typedef Kernel::FT 	FT;
     typedef Kernel::Point_3 Point3;
     typedef CGAL::Point_set_3<Point3> PointSet3;

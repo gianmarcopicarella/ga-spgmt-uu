@@ -4,34 +4,25 @@
 
 namespace SPGMT
 {
-	enum class VertexType
+	enum class EdgeType
 	{
-		FINITE,
-		INFINITE
+		LINE,
+		HALF_EDGE_EF,
+		HALF_EDGE_SF,
+		SEGMENT
 	};
 
-	struct Vertex
+	template<typename T>
+	struct Edge
 	{
-		VertexType myType { VertexType::FINITE };
-		Point3 myPoint;
-		std::vector<int> mySortedNeighboursIndices;
-		std::vector<int> myLowestLeftPlanes;
+		T myStart, myEnd;
+		EdgeType myType{ EdgeType::SEGMENT };
+		int myLowestLeftPlane{ -1 };
 	};
 
-	enum class FaceType
-	{
-		BOUNDED,
-		UNBOUNDED,
-		UNBOUNDED_ONE_EDGE
-	};
+	using LowerEnvelope3d = std::variant<std::monostate, int, std::vector<Edge<Point3>>>;
+	using Triangles3d = std::variant<std::monostate, std::vector<Point3>>;
 
-	struct Face
-	{
-		FaceType myType{ FaceType::BOUNDED };
-		std::vector<int> myVertexIndices;
-		int myPlaneIndex{ -1 };
-	};
-
-	std::vector<Vertex> ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
-	std::vector<Face> ExtractLowerEnvelopeFaces(const std::vector<Vertex>& someVertices);
+	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
+	Triangles3d TriangulateLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
 }
