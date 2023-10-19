@@ -5,10 +5,6 @@
 #include <hpx/hpx.hpp>
 
 #include <atomic>
-
-#include <iostream>
-#include <chrono>
-
 namespace SPGMT
 {
 	namespace Common
@@ -292,6 +288,41 @@ namespace SPGMT
 			std::vector<Point3> myUniqueVertices;
 		};
 
+		std::vector<Edge<Point3>> locTriangulateConvexFace(
+			const std::vector<Edge<Point3>>::iterator aStartIter,
+			const std::vector<Edge<Point3>>::iterator anEndIter)
+		{
+			CGAL_precondition(std::distance(aStartIter, anEndIter) > 1);
+
+			std::vector<Edge<Point3>> edges;
+
+			for (auto it = aStartIter + 1; it != anEndIter; ++it)
+			{
+				if (aStartIter->myStart == it->myEnd)
+				{
+#ifndef NDEBUG
+					const auto isBoundedFace = aStartIter->myType == EdgeType::SEGMENT;
+					CGAL_postcondition(isBoundedFace);
+#endif			
+					continue;
+				}
+
+				Edge<Point3> edge, oppositeEdge;
+
+				edge.myType = EdgeType::SEGMENT_TRIANGLE;
+				edge.myStart = aStartIter->myStart;
+				edge.myEnd = it->myEnd;
+
+				oppositeEdge.myType = EdgeType::SEGMENT_TRIANGLE;
+				oppositeEdge.myStart = it->myEnd;
+				oppositeEdge.myEnd = aStartIter->myStart;
+
+				edges.emplace_back(edge);
+				edges.emplace_back(oppositeEdge);
+			}
+			return edges;
+		}
+
 		using namespace Common;
 		void locComputeLines(const std::vector<Plane>& somePlanes, LinesAndVerticesData& anOutResult)
 		{
@@ -376,47 +407,6 @@ namespace SPGMT
 			}
 		}
 	}
-
-	namespace
-	{
-		using namespace Common;
-
-		std::vector<Edge<Point3>> locTriangulateConvexFace(
-			const std::vector<Edge<Point3>>::iterator aStartIter,
-			const std::vector<Edge<Point3>>::iterator anEndIter)
-		{
-			CGAL_precondition(std::distance(aStartIter, anEndIter) > 1);
-
-			std::vector<Edge<Point3>> edges;
-
-			for (auto it = aStartIter + 1; it != anEndIter; ++it)
-			{
-				if (aStartIter->myStart == it->myEnd)
-				{
-#ifndef NDEBUG
-					const auto isBoundedFace = aStartIter->myType == EdgeType::SEGMENT;
-					CGAL_postcondition(isBoundedFace);
-#endif			
-					continue;
-				}
-
-				Edge<Point3> edge, oppositeEdge;
-
-				edge.myType = EdgeType::SEGMENT_TRIANGLE;
-				edge.myStart = aStartIter->myStart;
-				edge.myEnd = it->myEnd;
-
-				oppositeEdge.myType = EdgeType::SEGMENT_TRIANGLE;
-				oppositeEdge.myStart = it->myEnd;
-				oppositeEdge.myEnd = aStartIter->myStart;
-
-				edges.emplace_back(edge);
-				edges.emplace_back(oppositeEdge);
-			}
-			return edges;
-		}
-	}
-
 
 	LowerEnvelope3d ParallelComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
 	{
@@ -734,6 +724,7 @@ namespace SPGMT
 
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
 	{
+		using namespace Sequential;
 		constexpr auto policy = ExecutionPolicy::SEQUENTIAL;
 		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
 		auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);
@@ -771,6 +762,7 @@ namespace SPGMT
 
 	void ParallelTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
 	{
+		using namespace Common;
 		constexpr auto policy = ExecutionPolicy::PARALLEL;
 		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
 		auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);

@@ -3,10 +3,26 @@
 
 #include <vector>
 
+#include <hpx/hpx.hpp>
+
 namespace SPGMT
 {
+
 	namespace
 	{
+		template<ExecutionPolicy E, typename Action>
+		auto BindExecutionPolicy(Action&& anOutAction)
+		{
+			switch (E)
+			{
+			case SPGMT::ExecutionPolicy::PARALLEL:
+				return anOutAction(hpx::execution::par);
+			default:
+				return anOutAction(hpx::execution::seq);
+			}
+		}
+
+
 		struct LineParallelLineVisitor
 		{
 			struct Data
@@ -95,27 +111,32 @@ namespace SPGMT
 				return Line2{ aSecond, aFirst };
 			}
 		}
+
+		template<ExecutionPolicy E>
 		std::vector<Line2> locProjectOnXYPlane(const std::vector<Line3>& someLines)
 		{
-			const FT distance{ 1000.f };
-			std::vector<Line2> result;
-			for (const auto& line : someLines)
-			{
-				const auto& translation = line.to_vector() * distance;
-				const auto firstPoint{ line.point() };
+			static const FT distance{ 1000.f };
+			std::vector<Line2> result(someLines.size());
+
+			BindExecutionPolicy<E>(std::bind(hpx::for_loop, std::placeholders::_1, 0, someLines.size(), [&](size_t aLineIdx) {
+				const auto& translation = someLines[aLineIdx].to_vector() * distance;
+				const auto firstPoint{ someLines[aLineIdx].point() };
 				const auto secondPoint{ firstPoint + translation };
-				const auto line2d = Create2DLine(
+				result[aLineIdx] = Create2DLine(
 					Point2{ firstPoint.x(), firstPoint.y() },
 					Point2{ secondPoint.x(), secondPoint.y() });
-				result.push_back(line2d);
-			}
+				}));
+
 			return result;
 		}
+		template<ExecutionPolicy E>
 		std::vector<Line2> locProjectOnXYPlaneUnique(const std::vector<Line3>& someLines)
 		{
-			auto result = locProjectOnXYPlane(someLines);
-			result.erase(std::unique(result.begin(), result.end(),
-				CGAL::Equal_to<Line2, Line2>()), result.end());
+			auto result = locProjectOnXYPlane<E>(someLines);
+			auto uniqueIter =
+				BindExecutionPolicy<E>(std::bind(hpx::unique, std::placeholders::_1,
+					result.begin(), result.end(), CGAL::Equal_to<Line2, Line2>()));
+			result.erase(uniqueIter, result.end());
 			return result;
 		}
 
@@ -347,7 +368,7 @@ namespace SPGMT
 
 			LineData data;
 
-			data.myLines = locProjectOnXYPlaneUnique(someLines);
+			data.myLines = locProjectOnXYPlaneUnique<ExecutionPolicy::SEQUENTIAL>(someLines);
 			data.mySortedVertices.resize(data.myLines.size());
 
 			constexpr auto pointIndexPairCmp = [](auto& a, auto& b)
@@ -413,7 +434,7 @@ namespace SPGMT
 			return data;
 		}
 
-		SlabPartition locComputeSlabs(const LineData& aLineData)
+		namespace Common
 		{
 			const auto slopeTransform = [](const auto& aLine) {
 				std::optional<FT> result{ std::nullopt };
@@ -424,6 +445,7 @@ namespace SPGMT
 				}
 				return result;
 			};
+
 			const auto sort = [](const auto& aFirst, const auto& aSecond) {
 				return aFirst.myY < aSecond.myY ||
 					(aFirst.myY == aSecond.myY && aFirst.mySlope < aSecond.mySlope);
@@ -432,12 +454,84 @@ namespace SPGMT
 				return aFirst.myY < aSecond.myY ||
 					(aFirst.myY == aSecond.myY && aFirst.mySlope > aSecond.mySlope);
 			};
+		}
 
+		namespace Parallel
+		{
+			SlabPartition locComputeSlabs(const LineData& aLineData)
+			{
+				using namespace Common;
+				// compute slope
+				std::vector<std::optional<FT>> slopes(aLineData.myLines.size());
+
+				// Compute slopes for each line
+				hpx::for_loop(hpx::execution::par_unseq, 0, aLineData.myLines.size(), [&](size_t aLineIdx) {
+					slopes[aLineIdx] = slopeTransform(aLineData.myLines[aLineIdx]);
+					});
+
+				SlabPartition partition;
+				partition.mySortedLines.resize(aLineData.myUniqueAndSortedVerticesX.size() + 1);
+
+				std::mutex verticalLinesMutex;
+
+				hpx::for_loop(hpx::execution::par_unseq, 0, aLineData.myUniqueAndSortedVerticesX.size(), [&](size_t aSlabIdx) {
+
+					const auto& currentX = aLineData.myUniqueAndSortedVerticesX[aSlabIdx];
+					std::vector<LineInfo> sortedLines(aLineData.myLines.size());
+					std::atomic<size_t> atomicCounter{ 0 };
+
+					hpx::for_loop(hpx::execution::par, 0, aLineData.myLines.size(), [&](size_t k) {
+						const auto& currentLine = aLineData.myLines[k];
+						if (currentLine.is_vertical())
+						{
+							std::lock_guard guard(verticalLinesMutex);
+							CGAL_precondition(partition.myVerticalLineIndex.find(aSlabIdx) ==
+								partition.myVerticalLineIndex.end());
+							partition.myVerticalLineIndex.insert(std::make_pair((int)aSlabIdx, (int)k));
+						}
+						else
+						{
+							const auto& dir = currentLine.direction();
+							const auto slope = dir.dy() / dir.dx();
+							const auto Y = currentLine.y_at_x(currentX);
+							sortedLines[atomicCounter.fetch_add(1)] = LineInfo{ Y, slope, (int)k };
+						}
+						});
+					sortedLines.resize(atomicCounter.fetch_xor(atomicCounter.load()));
+
+					if (aSlabIdx == 0)
+					{
+						hpx::sort(hpx::execution::par_unseq, sortedLines.begin(), sortedLines.end(), sortInverseSlope);
+
+						partition.mySortedLines[aSlabIdx].resize(sortedLines.size());
+
+						hpx::transform(hpx::execution::par_unseq, sortedLines.begin(), sortedLines.end(), 
+							partition.mySortedLines[aSlabIdx].begin(), [](const auto& aLine) { return aLine.myIndex; });
+					}
+
+					hpx::sort(hpx::execution::par_unseq, sortedLines.begin(), sortedLines.end(), sort);
+					
+					partition.mySortedLines[aSlabIdx + 1].resize(sortedLines.size());
+
+					hpx::transform(hpx::execution::par_unseq, sortedLines.begin(), sortedLines.end(),
+						partition.mySortedLines[aSlabIdx + 1].begin(), [](const auto& aLine) { return aLine.myIndex; });
+					});
+
+				return partition;
+			}
+		}
+
+
+		SlabPartition locComputeSlabs(const LineData& aLineData)
+		{
+			using namespace Common;
 			// compute slope
-			std::vector<std::optional<FT>> slopes;
+			std::vector<std::optional<FT>> slopes(aLineData.myLines.size());
 
 			// Compute slopes for each line
-			std::transform(aLineData.myLines.begin(), aLineData.myLines.end(), std::back_inserter(slopes), slopeTransform);
+			hpx::for_loop(hpx::execution::seq, 0, aLineData.myLines.size(), [&](size_t aLineIdx) {
+				slopes[aLineIdx] = slopeTransform(aLineData.myLines[aLineIdx]);
+				});
 
 			SlabPartition partition;
 
@@ -451,7 +545,7 @@ namespace SPGMT
 					const auto& currentLine = aLineData.myLines[k];
 					if (currentLine.is_vertical())
 					{
-						CGAL_precondition(partition.myVerticalLineIndex.find(slabIdx) == 
+						CGAL_precondition(partition.myVerticalLineIndex.find(slabIdx) ==
 							partition.myVerticalLineIndex.end());
 						partition.myVerticalLineIndex.insert(std::make_pair(slabIdx, k));
 					}
@@ -484,22 +578,253 @@ namespace SPGMT
 		}
 	}
 
-
-	std::vector<PlaneWrapper> GetPlaneWrappers(const std::vector<Plane>& somePlanes)
+	// Skeleton
+	BatchPointResult ParallelBatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
 	{
-		std::vector<PlaneWrapper> result;
-		for (const auto& plane : somePlanes)
+		constexpr auto policy = ExecutionPolicy::PARALLEL;
+
+		if (somePlanes.empty() || somePoints.empty())
 		{
-			result.push_back(PlaneWrapper{ plane });
+			return BatchPointResult{};
 		}
+
+		// Requirements check
+		CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
+		CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
+
+		// Find 3d lines
+		const auto maxLinesCount = somePlanes.size() * (somePlanes.size() - 1) / 2;
+		std::vector<Line3> lines3d(maxLinesCount);
+		std::atomic<size_t> atomicCount{ 0 };
+
+		hpx::for_loop(hpx::execution::par, 0, somePlanes.size(), [&](size_t aPlaneIdx) {
+
+			hpx::for_loop(hpx::execution::par, aPlaneIdx + 1, somePlanes.size(), [&](size_t anoterPlaneIdx) {
+				const auto intersection = CGAL::intersection(somePlanes[aPlaneIdx], somePlanes[anoterPlaneIdx]);
+				if (const auto* data = intersection.get_ptr())
+				{
+					const Line3* line = boost::get<Line3>(&*intersection);
+					CGAL_precondition(line != nullptr);
+					lines3d[atomicCount.fetch_add(1)] = *line;
+				}
+				});
+
+			});
+
+		lines3d.resize(atomicCount.fetch_xor(atomicCount.load()));
+
+		// 1st edge case: single plane or parallel planes
+		if (lines3d.empty())
+		{
+			BatchPointResult result;
+			std::vector<int> sortedPlanesIndices(somePlanes.size());
+
+			// Compute sorted list of plane indices
+			{
+				std::vector<std::pair<FT, size_t>> localPlanes(somePlanes.size());
+				const auto line = somePlanes[0].perpendicular_line(somePlanes[0].point());
+				hpx::for_loop(hpx::execution::par_unseq, 0, somePlanes.size(), [&](size_t aPlaneIdx) {
+					const auto intersection = CGAL::intersection(somePlanes[aPlaneIdx], line);
+					const auto* data = intersection.get_ptr();
+					const Point3* point = boost::get<Point3>(&*intersection);
+					CGAL_precondition(point != nullptr);
+					localPlanes[aPlaneIdx] = std::make_pair(point->z(), aPlaneIdx);
+					});
+
+				hpx::sort(hpx::execution::par_unseq, localPlanes.begin(), localPlanes.end(),
+					[&](const auto& aFirst, const auto& aSecond) { return aFirst.first < aSecond.first; });
+				hpx::for_loop(hpx::execution::par_unseq, 0, somePlanes.size(), [&](size_t aPlaneIdx) {
+					sortedPlanesIndices[aPlaneIdx] = localPlanes[aPlaneIdx].second;
+					});
+
+			}
+
+			result.mySortedPlanesIndices.insert(std::make_pair(0, sortedPlanesIndices));
+			result.myRangeWrappers.resize(somePoints.size());
+
+			hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
+				const auto firstUpperPlaneIdx = BinarySearch<Plane, Point3>(somePlanes, sortedPlanesIndices,
+				somePoints[aPointIdx], 0, sortedPlanesIndices.size());
+			result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, 0 };
+				});
+
+			return result;
+		}
+
+		// Compute lines data
+		// TODO: Find a way to parallelize efficiently
+		const auto linesData = locComputeLinesWrapper(lines3d);
+
+		// 2nd edge case: single or parallel lines
+		if (linesData.myUniqueVerticesCount == 0)
+		{
+			BatchPointResult result;
+			std::vector<int> sortedLinesIndices(linesData.myLines.size());
+
+			// Compute sorted list of lines indices
+			{
+				std::vector<std::pair<FT, size_t>> localLines(linesData.myLines.size());
+				const auto line = linesData.myLines[0].perpendicular(linesData.myLines[0].point());
+				hpx::for_loop(hpx::execution::par_unseq, 0, linesData.myLines.size(), [&](size_t aLineIdx) {
+					const auto intersection = CGAL::intersection(linesData.myLines[aLineIdx], line);
+					const auto* data = intersection.get_ptr();
+					const Point2* point = boost::get<Point2>(&*intersection);
+					CGAL_precondition(point != nullptr);
+
+					const Vec2 vecToPoint{ line.point(), *point };
+					const auto distanceSign = CGAL::sign(CGAL::scalar_product(vecToPoint, line.to_vector()))
+						== CGAL::Sign::POSITIVE ? FT(1.f) : FT(-1.f);
+
+					localLines[aLineIdx] = std::make_pair(distanceSign * vecToPoint.squared_length(), aLineIdx);
+					});
+
+				hpx::sort(hpx::execution::par_unseq, localLines.begin(), localLines.end(),
+					[&](const auto& aFirst, const auto& aSecond) { return aFirst.first < aSecond.first; });
+				hpx::for_loop(hpx::execution::par_unseq, 0, localLines.size(), [&](size_t aLineIdx) {
+					sortedLinesIndices[aLineIdx] = localLines[aLineIdx].second;
+					});
+			}
+
+			std::mutex planesIndicesMutex;
+
+			result.myRangeWrappers.resize(somePoints.size());
+
+			hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
+
+				const Point2 projectedPoint{ somePoints[aPointIdx].x(), somePoints[aPointIdx].y() };
+				const auto firstUpperLineIdx = BinarySearch<Line2, Point2>(linesData.myLines, sortedLinesIndices,
+					projectedPoint, 0, sortedLinesIndices.size());
+
+				const auto isPointAlongLine = firstUpperLineIdx < sortedLinesIndices.size() &&
+					linesData.myLines[sortedLinesIndices[firstUpperLineIdx]].has_on(projectedPoint);
+
+				const int bucketIndex = isPointAlongLine ? firstUpperLineIdx : (firstUpperLineIdx + linesData.myLines.size());
+
+				std::vector<int> sortedPlanesIndices;
+
+				{
+					std::lock_guard guard(planesIndicesMutex);
+					if (result.mySortedPlanesIndices.find(bucketIndex) == result.mySortedPlanesIndices.end())
+					{
+						const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
+							Line3{ somePoints[aPointIdx], Vec3{0,0,1} });
+						result.mySortedPlanesIndices.insert(std::make_pair(bucketIndex, sortedPlanesIndices));
+					}
+
+					sortedPlanesIndices = result.mySortedPlanesIndices.at(bucketIndex);
+				}
+
+				const auto firstUpperPlaneIdx = BinarySearch<Plane, Point3>(somePlanes, sortedPlanesIndices,
+					somePoints[aPointIdx], 0, sortedPlanesIndices.size());
+				result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, bucketIndex };
+
+
+				});
+
+			return result;
+		}
+
+		// Slab-based approach
+		const auto partition = Parallel::locComputeSlabs(linesData);
+
+		BatchPointResult result;
+
+		result.myRangeWrappers.resize(somePoints.size());
+
+		std::mutex planesIndicesMutex;
+
+		hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
+			const Point2 projectedPoint{ somePoints[aPointIdx].x(), somePoints[aPointIdx].y()};
+			int slabIdx = FindSlabIndex(linesData.myUniqueAndSortedVerticesX, 
+				projectedPoint, 0, linesData.myUniqueAndSortedVerticesX.size());
+			int globalBucketIndex = -1;
+
+			// Found slab idx and it is not -inf
+			if (slabIdx > -1)
+			{
+				CGAL_precondition(linesData.myUniqueAndSortedVerticesX[slabIdx] <= projectedPoint.x());
+				// Check if point is along vertical slab line
+				if (linesData.myUniqueAndSortedVerticesX[slabIdx] == projectedPoint.x())
+				{
+					const auto vLineIter = partition.myVerticalLineIndex.find(slabIdx);
+					if (vLineIter != partition.myVerticalLineIndex.end())
+					{
+						const int vLineIdx = vLineIter->second;
+						const auto lineSearchResult = linesData.FindSegmentOrVertexIndex(projectedPoint, vLineIdx);
+						if (!lineSearchResult.myIsVertex && lineSearchResult.myIndex > -1)
+						{
+							// Compute global index
+							globalBucketIndex = linesData.myUniqueVerticesCount + // Vertices count
+								linesData.mySegmentsCount[vLineIdx] + lineSearchResult.myIndex;
+						}
+					}
+				}
+				slabIdx += 1;
+			}
+			else
+			{
+				slabIdx = 0;
+			}
+
+			const auto& sortedLines = partition.mySortedLines[slabIdx];
+			const int lineIdx = BinarySearch(linesData.myLines, sortedLines, projectedPoint, 0, sortedLines.size());
+
+			if (lineIdx < sortedLines.size() && linesData.myLines[sortedLines[lineIdx]].has_on(projectedPoint))
+			{
+				const auto lineSearchResult = linesData.FindSegmentOrVertexIndex(projectedPoint, sortedLines[lineIdx]);
+				CGAL_precondition(lineSearchResult.myIndex > -1);
+
+				if (lineSearchResult.myIsVertex)
+				{
+					// Compute global index
+					globalBucketIndex = lineSearchResult.myIndex;
+					//CGAL_precondition(lineSearchResult.myIndex < linesData.myUniqueVerticesCount);
+				}
+				else
+				{
+					globalBucketIndex = linesData.myUniqueVerticesCount + // Vertices count
+						linesData.mySegmentsCount[sortedLines[lineIdx]] + lineSearchResult.myIndex;
+				}
+			}
+
+			if (globalBucketIndex == -1)
+			{
+				globalBucketIndex = linesData.myUniqueVerticesCount + // Vertices count
+					linesData.mySegmentsCount.back() + // Segments count
+					lineIdx + slabIdx * (linesData.myLines.size() + 1); // Faces count
+			}
+
+			std::vector<int> sortedPlanesIndices;
+
+			{
+				std::lock_guard guard(planesIndicesMutex);
+				if (result.mySortedPlanesIndices.find(globalBucketIndex) == result.mySortedPlanesIndices.end())
+				{
+					const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
+						Line3{ somePoints[aPointIdx], Vec3{0,0,1}});
+					result.mySortedPlanesIndices.insert(std::make_pair(globalBucketIndex, sortedPlanesIndices));
+				}
+
+				sortedPlanesIndices = result.mySortedPlanesIndices.at(globalBucketIndex);
+			}
+
+			//CGAL_precondition(SameLists(sortedPlanesIndices, sortedPlanesIndices_cache));
+			const auto firstUpperPlaneIdx = BinarySearch<Plane, Point3>(somePlanes, sortedPlanesIndices,
+				somePoints[aPointIdx], 0, sortedPlanesIndices.size());
+			result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, globalBucketIndex };
+
+			});
+
 		return result;
 	}
 
-	Result BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
+
+	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
 	{
 		if (somePlanes.empty() || somePoints.empty())
 		{
-			return Result{};
+			return BatchPointResult{};
 		}
 
 		// Requirements check
@@ -515,7 +840,7 @@ namespace SPGMT
 		{
 			const auto sortedPlanesIndices = locGetSortedItemsIndicesFromIntersections<LinePlaneVisitor>(somePlanes,
 				somePlanes[0].perpendicular_line(somePlanes[0].point()));
-			Result result;
+			BatchPointResult result;
 			result.mySortedPlanesIndices.insert(std::make_pair(0, sortedPlanesIndices));
 
 			for (const auto& queryPoint : somePoints)
@@ -536,7 +861,7 @@ namespace SPGMT
 		{
 			const auto sortedLinesIndices = locGetSortedItemsIndicesFromIntersections<LineParallelLineVisitor>(linesData.myLines,
 				linesData.myLines[0].perpendicular(linesData.myLines[0].point()));
-			Result result;
+			BatchPointResult result;
 			for (const auto& queryPoint : somePoints)
 			{
 				const Point2 projectedPoint{ queryPoint.x(), queryPoint.y() };
@@ -568,7 +893,7 @@ namespace SPGMT
 
 		int cacheUsageCount = 0;
 
-		Result result;
+		BatchPointResult result;
 
 		int counter = 0;
 
