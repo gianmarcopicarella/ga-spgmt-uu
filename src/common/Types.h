@@ -55,4 +55,29 @@ namespace SPGMT
     typedef Kernel::Sphere_3 Sphere3;
     //typedef Kernel::Iso_rectangle_2 Rec2;
     typedef Kernel::Iso_cuboid_3 Cube;
+
+    enum class EdgeType
+    {
+        LINE,
+        HALF_EDGE_EF,
+        HALF_EDGE_SF,
+        SEGMENT,
+        SEGMENT_TRIANGLE
+    };
+
+    template<typename T>
+    struct Edge
+    {
+        T myStart, myEnd;
+        EdgeType myType{ EdgeType::SEGMENT };
+        int myLowestLeftPlane{ -1 };
+    };
+
+    using LowerEnvelope3d = std::variant<std::monostate, size_t, std::vector<Edge<Point3>>>;
+
+    enum class ExecutionPolicy
+    {
+        SEQUENTIAL,
+        PARALLEL
+    };
 }

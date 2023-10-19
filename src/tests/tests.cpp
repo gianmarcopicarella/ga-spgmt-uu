@@ -1,13 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
+#include <catch2/catch_session.hpp>
 
 #include "../common/BatchPointLocation.h"
 #include "../common/BruteForce.h"
+#include "../common/SmartLowerEnvelope.h"
 #include "../common/DebugUtils.h"
-
 #include "../common/Visualization.h"
-
 #include "../common/Utils.h"
+
+// Including it here otherwise the compiler moans
+#include <hpx/hpx_init.hpp>
+
 
 TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
 {
@@ -261,14 +265,14 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
-	SECTION("100 random, non-vertical parallel planes")
+	SECTION("100 random, non-vertical parallel planes") 
 	{
 		constexpr auto planesCount = 100;
 		const auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount);
 
 		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 
-		REQUIRE(std::holds_alternative<int>(result));
+		REQUIRE(std::holds_alternative<size_t>(result));
 		REQUIRE(SPGMT::Debug::IsLowerEnvelopeCorrect(result, planes));
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
@@ -301,12 +305,89 @@ TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope
 		using namespace SPGMT;
 		constexpr auto planesCount = 40;
 		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
-		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+		auto result = SPGMT::ComputeLowerEnvelope(planes);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
 
-		SPGMT::TriangulateLowerEnvelope(result);
+		TriangulateLowerEnvelope(result);
 
 		SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
+}
+
+bool locIsPlaneFacingUpwards(const SPGMT::Plane& aPlane)
+{
+	using namespace SPGMT;
+	static const Vec3 up{ 0,0,1 };
+	return CGAL::sign(CGAL::scalar_product(up, aPlane.orthogonal_vector())) != CGAL::Sign::NEGATIVE;
+}
+
+TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[DualityMap]")
+{
+	SECTION("A point above a plane should become a plane below a point")
+	{
+		using namespace SPGMT;
+		/*
+		constexpr auto planesCount = 100;
+
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+		std::vector<Point3> points;
+
+		for (const auto& plane : planes)
+		{
+			points.emplace_back(plane.point() + plane.orthogonal_vector() * 10.f);
+			REQUIRE(plane.has_on_positive_side(points.back()));
+		}
+
+		// Apply duality
+		const auto& dualPoints = Utils::DualMapping(points);
+		const auto& dualPlanes = Utils::DualMapping(planes);
+
+		// Check property
+		for (int i = 0; i < planesCount; ++i)
+		{
+			std::cout << "Plane: " << dualPoints[i] << ", Point: " << dualPlanes[i] << std::endl;
+
+			if (locIsPlaneFacingUpwards(dualPoints[i]))
+			{
+				REQUIRE(!dualPoints[i].has_on_positive_side(dualPlanes[i]));
+			}
+			else
+			{
+				REQUIRE(!dualPoints[i].has_on_negative_side(dualPlanes[i]));
+			}
+
+
+		}
+		*/
+	}
+}
+
+TEST_CASE("ComputeSmartLowerEnvelope with some random planes", "[ComputeSmartLowerEnvelope]")
+{
+	SECTION("20 random dual planes")
+	{
+		using namespace SPGMT;
+		/*constexpr auto planesCount = 20;
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+		auto result = SPGMT::ComputeLowerEnvelopeSmart(planes);
+
+		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
+		*/
+		//SPGMT::TriangulateLowerEnvelope(result);
+
+		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
+	}
+}
+
+
+int RunTests(int argc, char* argv[])
+{
+	Catch::Session().run(argc, argv);
+	return hpx::finalize();
+}
+
+int main(int argc, char* argv[])
+{
+	return hpx::init(RunTests, argc, argv);
 }

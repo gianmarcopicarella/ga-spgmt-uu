@@ -149,7 +149,7 @@ namespace SPGMT
 			}
 			else
 			{
-				CGAL_precondition(std::holds_alternative<int>(aLowerEnvelope));
+				CGAL_precondition(std::holds_alternative<size_t>(aLowerEnvelope));
 			}
 
 			sf::ContextSettings settings;

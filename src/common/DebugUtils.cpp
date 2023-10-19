@@ -12,7 +12,7 @@ namespace SPGMT
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/ };
+		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*/1306513302/*4169948633*/ };
 		return rand;
 	}
 
@@ -127,10 +127,10 @@ namespace SPGMT
 
 			if (expectedLE.number_of_unbounded_faces() == 1 && expectedLE.number_of_faces() == 1)
 			{
-				CGAL_precondition(std::holds_alternative<int>(aLowerEnvelope));
+				CGAL_precondition(std::holds_alternative<size_t>(aLowerEnvelope));
 				const auto lowestPlane = expectedLE.faces_begin()->surfaces_begin()->plane();
 				const auto planeIter = std::find(somePlanes.begin(), somePlanes.end(), lowestPlane);
-				CGAL_precondition(std::distance(somePlanes.begin(), planeIter) == std::get<int>(aLowerEnvelope));
+				CGAL_precondition(std::distance(somePlanes.begin(), planeIter) == std::get<size_t>(aLowerEnvelope));
 				isValid = true;
 			}
 			else
@@ -214,12 +214,14 @@ namespace SPGMT
 								neighbourIter =
 									std::find_if(neighboursStartIter, neighboursEndIter,
 										std::bind(isEndpoint, endPoint, std::placeholders::_1));
+								CGAL_precondition(neighbourIter != neighboursEndIter);
 							}
 							else if (halfEdgeCurve.is_ray())
 							{
 								neighbourIter =
 									std::find_if(neighboursStartIter, neighboursEndIter,
 										std::bind(isAlongRay, halfEdgeCurve.ray(), std::placeholders::_1));
+								CGAL_precondition(neighbourIter != neighboursEndIter);
 							}
 							else
 							{
