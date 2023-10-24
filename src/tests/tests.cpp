@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
 #include <catch2/catch_session.hpp>
+#include <catch2/benchmark/catch_benchmark_all.hpp>
 
 #include "../common/BatchPointLocation.h"
 #include "../common/BruteForce.h"
@@ -21,7 +22,7 @@ TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "
 		std::vector<SPGMT::Plane> planes;
 		std::vector<SPGMT::Point3> points = SPGMT::Debug::Uniform3DCubeSampling(100.f, sampleCount);
 
-		const auto result = SPGMT::BatchPointLocation(planes, points);
+		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
 		REQUIRE((result.myRangeWrappers.empty() && result.mySortedPlanesIndices.empty()));
 	}
@@ -47,7 +48,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 		}
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation(planes, points);
+		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
 		REQUIRE(result.myRangeWrappers.size() == (planeSamplesCount * pointSamplesCount));
 		REQUIRE((result.mySortedPlanesIndices.size() == 1 && result.mySortedPlanesIndices.at(0).size() == planeSamplesCount));
@@ -100,7 +101,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 			const auto& points = SPGMT::Debug::RandomPointsPartitionedByPlane(pointSamplesCount, plane);
 
 			// run function
-			const auto result = SPGMT::BatchPointLocation({ plane }, points.mySamples);
+			const auto result = SPGMT::ParallelBatchPointLocation({ plane }, points.mySamples);
 			REQUIRE(result.myRangeWrappers.size() == pointSamplesCount);
 			REQUIRE((result.mySortedPlanesIndices.size() == 1 && result.mySortedPlanesIndices.at(0).size() == planeSamplesCount));
 
@@ -146,7 +147,7 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
 		}
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation(planes, points);
+		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
 		REQUIRE(result.myRangeWrappers.size() == points.size());
 
@@ -217,7 +218,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation(planes, points);
+		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
 		REQUIRE(result.myRangeWrappers.size() == points.size());
 
@@ -263,6 +264,34 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 	}
 }
 
+TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-PCLE]")
+{
+	constexpr auto benchmarksCount =5;
+	constexpr auto inputCount = 10;
+	for (auto i = 0; i < benchmarksCount; ++i)
+	{
+		std::string title = "PCLE-BruteForce (" + std::to_string(i * inputCount) + ")";
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount, -300, 300);
+		BENCHMARK(title.c_str()) {
+			return SPGMT::ParallelComputeLowerEnvelope(planes);
+		};
+	}
+}
+
+TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
+{
+	constexpr auto benchmarksCount = 10;
+	constexpr auto inputCount = 10;
+	for (auto i = 0; i < benchmarksCount; ++i)
+	{
+		std::string title = "CLE-BruteForce (" + std::to_string(i * inputCount) + ")";
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount, -300, 300);
+		BENCHMARK(title.c_str()) {
+			return SPGMT::ComputeLowerEnvelope(planes);
+		};
+	}
+}
+
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
 	SECTION("100 random, non-vertical parallel planes") 
@@ -296,15 +325,12 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
-}
 
-TEST_CASE("ComputeLowerEnvelope with some random planes", "[ComputeLowerEnvelope]")
-{
 	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
-		constexpr auto planesCount = 40;
-		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+		constexpr auto planesCount = 25;
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
 		auto result = SPGMT::ComputeLowerEnvelope(planes);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
@@ -327,7 +353,7 @@ TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[Duality
 	SECTION("A point above a plane should become a plane below a point")
 	{
 		using namespace SPGMT;
-		/*
+		
 		constexpr auto planesCount = 100;
 
 		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
@@ -359,7 +385,7 @@ TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[Duality
 
 
 		}
-		*/
+		
 	}
 }
 
@@ -383,7 +409,21 @@ TEST_CASE("ComputeSmartLowerEnvelope with some random planes", "[ComputeSmartLow
 
 int RunTests(int argc, char* argv[])
 {
-	Catch::Session().run(argc, argv);
+	Catch::ConfigData settings;
+	settings.benchmarkSamples = 3;
+	
+	std::vector<std::string> testOrTag;
+	
+	testOrTag.push_back("[ComputeLowerEnvelope]");
+	//testOrTag.push_back("[Benchmark-PCLE]"); //,[Benchmark-CLE]
+	
+	settings.testsOrTags = testOrTag;
+
+	Catch::Session session;
+
+	session.useConfigData(settings);
+	session.run();
+	//Catch::Session().run(argc, argv);
 	return hpx::finalize();
 }
 

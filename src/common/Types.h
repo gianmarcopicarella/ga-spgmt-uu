@@ -18,6 +18,10 @@
 //#include <CGAL/Iso_rectangle_2.h>
 #include <CGAL/Iso_cuboid_3.h>
 
+#include <CGAL/Triangle_3.h>
+
+#include <hpx/hpx.hpp>
+
 // Only for debug
 //#include <CGAL/Simple_cartesian.h>
 //#include <CGAL/Exact_rational.h>
@@ -55,6 +59,7 @@ namespace SPGMT
     typedef Kernel::Sphere_3 Sphere3;
     //typedef Kernel::Iso_rectangle_2 Rec2;
     typedef Kernel::Iso_cuboid_3 Cube;
+    typedef Kernel::Triangle_3 Triangle;
 
     enum class EdgeType
     {
@@ -77,7 +82,22 @@ namespace SPGMT
 
     enum class ExecutionPolicy
     {
-        SEQUENTIAL,
-        PARALLEL
+        SEQ,
+        PAR,
+        PAR_UNSEQ
     };
+
+    template <ExecutionPolicy E, typename Func, class ... Args>
+    decltype(auto) BindExecutionPolicy(Func&& aFunction, Args&&...someArgs)
+    {
+        switch (E)
+        {
+        case SPGMT::ExecutionPolicy::PAR:
+            return std::forward<Func>(aFunction)(hpx::execution::par, std::forward<Args>(someArgs)...);
+        case SPGMT::ExecutionPolicy::PAR_UNSEQ:
+            return std::forward<Func>(aFunction)(hpx::execution::par_unseq, std::forward<Args>(someArgs)...);
+        default:
+            return std::forward<Func>(aFunction)(hpx::execution::seq, std::forward<Args>(someArgs)...);
+        }
+    }
 }

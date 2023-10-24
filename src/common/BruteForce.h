@@ -11,4 +11,7 @@ namespace SPGMT
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope);
 
 	void ParallelTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope);
+
+	// Trivial to parallelize
+	size_t CountUniqueVertices(const LowerEnvelope3d& aLowerEnvelope);
 }
