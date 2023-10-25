@@ -8,22 +8,6 @@ namespace SPGMT
 {
 	namespace
 	{
-		// Temporary
-		Vec3 locGetUniformLineVector(const Line3& aLine)
-		{
-			constexpr auto distance = 1000.f;
-			const auto& a = aLine.point();
-			const auto& b = a + aLine.to_vector() * distance;
-			if (a < b)
-			{
-				return Vec3{ a, b };
-			}
-			else
-			{
-				return Vec3{ b, a };
-			}
-		}
-
 		template<ExecutionPolicy E>
 		bool locIsVertexInLowerEnvelope(
 			const std::vector<Plane>& somePlanes,
@@ -85,8 +69,8 @@ namespace SPGMT
 			CGAL_precondition(somePlanes.size() > 0);
 			CGAL_precondition(somePlanesIndices.size() > 0);
 
-			const auto lineDir = locGetUniformLineVector(aLine);
-			const Vec3 leftDir{ -CGAL::cross_product(lineDir, up) };
+			const auto d = aLine.direction();
+			const Vec3 leftDir{ -CGAL::cross_product(Vec3{d.dx(), d.dy(), d.dz()}, up) };
 			const auto sampleLoc = aLine.point() + leftDir * 1000.f;
 
 			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<E>(somePlanes, somePlanesIndices, sampleLoc);
@@ -299,18 +283,34 @@ namespace SPGMT
 
 	namespace Parallel
 	{
+		enum class STATUS
+		{
+			NONE = 0,
+			INIT = -1,
+		};
+
+		template<typename T>
+		void locTrimToLastValidItem(std::vector<T>& someOutItems)
+		{
+			// Still using a sequential version because it is fast
+			auto it = someOutItems.begin();
+			while (std::get<0>(*it) == STATUS::INIT && ++it != someOutItems.end());
+			someOutItems.resize(std::distance(someOutItems.begin(), it));
+		}
+
 		void locComputeData(const std::vector<Plane>& somePlanes, BruteForceData& anOutData)
 		{
 			static const Point3 zero{ 0,0,0 };
 			constexpr auto policy = ExecutionPolicy::PAR_UNSEQ;
-			const auto maxLinesCount = somePlanes.size() * (somePlanes.size() - 1);
-			using LineWrapper = std::tuple<Point3, Point3, size_t>;
+			const auto maxLinesCount = somePlanes.size() * (somePlanes.size());
+			using LineWrapper = std::tuple<STATUS, Point3, Point3, size_t>;
+
 			std::vector<LineWrapper> lines(maxLinesCount);
-			std::atomic<size_t> atomicCount{ 0 };
 
 			// Find intersection lines
 			hpx::for_loop(hpx::execution::par_unseq, 0, somePlanes.size(), [&](size_t aPlaneIdx)
 				{
+					//auto startOutIdx = outStart[aPlaneIdx];
 					hpx::for_loop(hpx::execution::par_unseq, aPlaneIdx + 1, somePlanes.size(), [&](size_t anotherPlaneIdx)
 						{
 							const auto intersection =
@@ -319,33 +319,37 @@ namespace SPGMT
 							{
 								const Line3* line = boost::get<Line3>(&*intersection);
 								CGAL_precondition(line != nullptr);
-								const auto outIdx = atomicCount.fetch_add(2, std::memory_order_relaxed);
 
 								auto start = line->projection(zero);
 								auto end = start + line->to_vector() * FT(1000.f);
 								if (start > end) std::swap(start, end);
 								CGAL_precondition(start < end);
 
-								lines[outIdx] = std::make_tuple(start, end, aPlaneIdx);
-								lines[outIdx + 1] = lines[outIdx];
-								std::get<2>(lines[outIdx + 1]) = anotherPlaneIdx;
+								const auto outFirstIdx = aPlaneIdx * somePlanes.size() + anotherPlaneIdx;
+								const auto outSecondIdx = anotherPlaneIdx * somePlanes.size() + aPlaneIdx;
+
+								CGAL_precondition(std::get<0>(lines[outFirstIdx]) == STATUS::NONE);
+								CGAL_precondition(std::get<0>(lines[outSecondIdx]) == STATUS::NONE);
+
+								lines[outFirstIdx] = std::make_tuple(STATUS::INIT, start, end, aPlaneIdx);
+								lines[outSecondIdx] = std::make_tuple(STATUS::INIT, start, end, anotherPlaneIdx);
 							}
 						});
 				});
-			lines.resize(atomicCount.fetch_xor(atomicCount.load()));
 
 			// Sort and keep only unique lines
 			hpx::sort(hpx::execution::par_unseq, lines.begin(), lines.end());
 
+			locTrimToLastValidItem(lines);
+
 			const auto uniqueEntriesCount =
 				static_cast<size_t>(std::distance(
 					lines.begin(),
-					hpx::unique(hpx::execution::par_unseq, lines.begin(), lines.end())));
-
+					hpx::unique(hpx::execution::par_unseq, lines.begin(), lines.end()))) - 1;
 
 			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = locAreItemsParallel<ExecutionPolicy::PAR>(lines,
-				[](const auto& aLine) { return Dir3{ std::get<1>(aLine) - std::get<0>(aLine) }; });
+			const auto areAllLinesParallel = locAreItemsParallel<policy>(lines,
+				[](const auto& aLine) { return Dir3{ std::get<2>(aLine) - std::get<1>(aLine) }; });
 			if (areAllLinesParallel)
 			{
 				static const Point3 zero{ 0,0,0 };
@@ -354,19 +358,19 @@ namespace SPGMT
 
 				auto lineIter =
 					hpx::find_if(hpx::execution::par_unseq, lines.begin(), virtualLinesEnd,
-						[&](const auto& aLine) { return locIsVertexInLowerEnvelope<policy>(somePlanes, std::get<0>(aLine)); });
+						[&](const auto& aLine) { return locIsVertexInLowerEnvelope<policy>(somePlanes, std::get<1>(aLine)); });
 
-				while (lineIter != lines.begin() && std::get<2>(*lineIter) == std::get<2>(*(lineIter - 1))) { --lineIter; }
+				while (lineIter != lines.begin() && std::get<3>(*lineIter) == std::get<3>(*(lineIter - 1))) { --lineIter; }
 
 				CGAL_precondition(lineIter != virtualLinesEnd);
-				const auto& lowerEnvelopeLine = Line3{ std::get<0>(*lineIter), std::get<1>(*lineIter) };
+				const auto& lowerEnvelopeLine = Line3{ std::get<1>(*lineIter), std::get<2>(*lineIter) };
 
 				std::vector<size_t> planesIndices;
 				for (auto iter = lineIter;
 					iter != virtualLinesEnd &&
-					std::get<2>(*iter) == std::get<2>(*lineIter); ++iter)
+					std::get<3>(*iter) == std::get<3>(*lineIter); ++iter)
 				{
-					planesIndices.emplace_back(std::get<2>(*iter));
+					planesIndices.emplace_back(std::get<3>(*iter));
 				}
 
 				const auto minMaxPlanes = locGetMinMaxSteepPlaneIndices<policy>(lowerEnvelopeLine, somePlanes, planesIndices);
@@ -390,122 +394,131 @@ namespace SPGMT
 			}
 
 			// Collect min-max planes and unique lines
-			anOutData.myMinMaxPlanes.resize(uniqueEntriesCount / 2);
-			std::vector<Line3> uniqueLines(uniqueEntriesCount / 2);
+			using UniqueLineWrapper = std::tuple<STATUS, Line3, std::tuple<size_t, size_t>>;
+			std::vector<UniqueLineWrapper> uniqueLines(uniqueEntriesCount);
 
 			hpx::for_loop(hpx::execution::par_unseq, 0, uniqueEntriesCount, [&](size_t aLineIdx) {
 				if (aLineIdx == 0 ||
-					std::get<0>(lines[aLineIdx]) != std::get<0>(lines[aLineIdx - 1]) ||
-					std::get<1>(lines[aLineIdx]) != std::get<1>(lines[aLineIdx - 1]))
+					std::get<1>(lines[aLineIdx]) != std::get<1>(lines[aLineIdx - 1]) ||
+					std::get<2>(lines[aLineIdx]) != std::get<2>(lines[aLineIdx - 1]))
 				{
-					const auto outIdx = atomicCount.fetch_add(1, std::memory_order_relaxed);
-					uniqueLines[outIdx] = Line3{ std::get<0>(lines[aLineIdx]), std::get<1>(lines[aLineIdx]) };
-
 					std::vector<size_t> planesIndices;
-					planesIndices.emplace_back(std::get<2>(lines[aLineIdx]));
+					planesIndices.emplace_back(std::get<3>(lines[aLineIdx]));
 
 					for (size_t i = aLineIdx + 1;
 						i < lines.size() &&
-						std::get<0>(lines[aLineIdx]) == std::get<0>(lines[i]) &&
-						std::get<1>(lines[aLineIdx]) == std::get<1>(lines[i]); ++i)
+						std::get<1>(lines[aLineIdx]) == std::get<1>(lines[i]) &&
+						std::get<2>(lines[aLineIdx]) == std::get<2>(lines[i]); ++i)
 					{
-						planesIndices.emplace_back(std::get<2>(lines[i]));
+						planesIndices.emplace_back(std::get<3>(lines[i]));
 					}
 
-					anOutData.myMinMaxPlanes[outIdx] =
-						locGetMinMaxSteepPlaneIndices<policy>(uniqueLines[outIdx], somePlanes, planesIndices);
+					const auto& outLine = Line3{ std::get<1>(lines[aLineIdx]), std::get<2>(lines[aLineIdx]) };
+					const auto& minMaxPlanes = locGetMinMaxSteepPlaneIndices<ExecutionPolicy::SEQ>(outLine, somePlanes, planesIndices);
+
+					CGAL_precondition(std::get<0>(uniqueLines[aLineIdx]) == STATUS::NONE);
+
+					uniqueLines[aLineIdx] = std::make_tuple(STATUS::INIT, outLine, minMaxPlanes);
 				}
 				});
 
-			anOutData.myMinMaxPlanes.resize(atomicCount.load());
-			uniqueLines.resize(atomicCount.fetch_xor(atomicCount.load()));
+			// Sort and keep only unique lines
+			hpx::sort(hpx::execution::par_unseq, uniqueLines.begin(), uniqueLines.end(),
+				[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+
+			locTrimToLastValidItem(uniqueLines);
 
 			// Compute vertices
-			const auto maxVerticesCount = uniqueLines.size() * (uniqueLines.size() - 1);
-			anOutData.myVertices.resize(maxVerticesCount + 2 * uniqueLines.size());
+			const auto maxVerticesCount = uniqueLines.size() * (uniqueLines.size());
 
-			//std::cout << "Find all vertices" << std::endl;
+			using VertexWrapper = std::tuple<STATUS, size_t, Point3>;
+			std::vector<VertexWrapper> vertices(maxVerticesCount);
 
 			hpx::for_loop(hpx::execution::par_unseq, 0, uniqueLines.size(), [&](size_t aLineIdx) {
 				hpx::for_loop(hpx::execution::par_unseq, aLineIdx + 1, uniqueLines.size(), [&](size_t anotherLineIdx) {
-					const auto intersection = CGAL::intersection(uniqueLines[aLineIdx], uniqueLines[anotherLineIdx]);
+					const auto intersection = CGAL::intersection(std::get<1>(uniqueLines[aLineIdx]), std::get<1>(uniqueLines[anotherLineIdx]));
 					if (intersection)
 					{
 						const Point3* point = boost::get<Point3>(&*intersection);
 						CGAL_precondition(point != nullptr);
-						const auto outIndex = atomicCount.fetch_add(2, std::memory_order_relaxed);
-						anOutData.myVertices[outIndex] = std::make_tuple(aLineIdx, *point);
-						anOutData.myVertices[outIndex + 1] = std::make_tuple(anotherLineIdx, *point);
+						//const auto outIndex = atomicCount.fetch_add(2, std::memory_order_relaxed);
+
+						const auto outFirstIdx = aLineIdx * uniqueLines.size() + anotherLineIdx;
+						const auto outSecondIdx = anotherLineIdx * uniqueLines.size() + aLineIdx;
+
+						vertices[outFirstIdx] = std::make_tuple(STATUS::INIT, aLineIdx, *point);
+						vertices[outSecondIdx] = std::make_tuple(STATUS::INIT, anotherLineIdx, *point);
 					}
 					});
 				});
 
-			// Sort vertices
-			hpx::sort(hpx::execution::par_unseq, anOutData.myVertices.begin(),
-				anOutData.myVertices.begin() + atomicCount.load());
+			// Sort vertices NEW
+			hpx::sort(hpx::execution::par_unseq, vertices.begin(), vertices.end());
+
+			locTrimToLastValidItem(vertices);
+
+			const auto endUniqueIter =
+				hpx::unique(hpx::execution::par_unseq, vertices.begin(), vertices.end());
+			vertices.erase(endUniqueIter, vertices.end());
+
+
+			anOutData.myVertices.resize(vertices.size() + 2 * uniqueLines.size());
+			hpx::transform(hpx::execution::par_unseq, vertices.begin(), vertices.end(), anOutData.myVertices.begin(),
+				[](const auto& a) { return std::make_tuple(std::get<1>(a), std::get<2>(a)); });
 
 			//std::cout << "Done sorting" << std::endl;
 
-			// Compute points at infinity
-			{
-				locInsertInfinityPoints(
-					anOutData.myVertices[0],
-					anOutData.myVertices[atomicCount.load() - 1],
-					uniqueLines[std::get<0>(anOutData.myVertices[0])],
-					uniqueLines[std::get<0>(anOutData.myVertices[atomicCount.load() - 1])],
-					anOutData.myVertices.begin() + atomicCount.load());
-				atomicCount.fetch_add(2);
-			}
-
-			hpx::for_loop(hpx::execution::par_unseq, 1, atomicCount.load() - 3, [&](size_t aVertexIdx) {
-				if (std::get<0>(anOutData.myVertices[aVertexIdx]) <
-					std::get<0>(anOutData.myVertices[aVertexIdx + 1]))
-				{
-					locInsertInfinityPoints(
-						anOutData.myVertices[aVertexIdx + 1],
-						anOutData.myVertices[aVertexIdx],
-						uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx + 1])],
-						uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx])],
-						anOutData.myVertices.begin() + atomicCount.fetch_add(2, std::memory_order_relaxed));
-				}
-				});
-
-			anOutData.myVertices.resize(atomicCount.load());
-
-			//std::cout << "1" << std::endl;
-
-			hpx::sort(hpx::execution::par_unseq, anOutData.myVertices.begin(), anOutData.myVertices.end());
-
-			//std::cout << "2" << std::endl;
-
-			const auto endUniqueIter =
-				hpx::unique(hpx::execution::par_unseq, anOutData.myVertices.begin(), anOutData.myVertices.end());
-
-			//std::cout << "3" << std::endl;
-
-			anOutData.myVertices.erase(endUniqueIter, anOutData.myVertices.end());
-
-			// Compute and sort line ranges
 			anOutData.myRanges.resize(uniqueLines.size() + 1);
 			anOutData.myRanges.front() = 0;
 			anOutData.myRanges.back() = anOutData.myVertices.size();
 
-			//std::cout << "4" << std::endl;
+			const auto finiteVerticesCount = vertices.size();
 
-			atomicCount.store(1);
+			// Compute points at infinity
+			{
+				constexpr auto distance = 1000.f;
+				const auto& minusInfPoint = std::get<1>(anOutData.myVertices[0]) - std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[0])]).to_vector() * distance;
+				const auto& plusInfPoint = std::get<1>(anOutData.myVertices[vertices.size() - 1]) + std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[vertices.size() - 1])]).to_vector() * distance;
 
-			hpx::for_loop(hpx::execution::par_unseq, 1, anOutData.myVertices.size() - 1, [&](size_t aVertexIdx) {
-				if (std::get<0>(anOutData.myVertices[aVertexIdx - 1]) !=
-					std::get<0>(anOutData.myVertices[aVertexIdx]))
+				CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[0])]).has_on(minusInfPoint));
+				CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[vertices.size() - 1])]).has_on(plusInfPoint));
+
+				const auto minusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[0]);
+				const auto plusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[vertices.size() - 1]) + 1;
+
+				anOutData.myVertices[minusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[0]), minusInfPoint);
+				anOutData.myVertices[plusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[vertices.size() - 1]), plusInfPoint);
+			}
+
+			hpx::for_loop(hpx::execution::par_unseq, 1, finiteVerticesCount - 1, [&](size_t aVertexIdx) {
+				if (std::get<0>(anOutData.myVertices[aVertexIdx]) <
+					std::get<0>(anOutData.myVertices[aVertexIdx + 1]))
 				{
-					const auto outIdx = atomicCount.fetch_add(1, std::memory_order_relaxed);
-					anOutData.myRanges[outIdx] = aVertexIdx;
+					constexpr auto distance = 1000.f;
+					const auto& minusInfPoint = std::get<1>(anOutData.myVertices[aVertexIdx + 1]) - std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx + 1])]).to_vector() * distance;
+					const auto& plusInfPoint = std::get<1>(anOutData.myVertices[aVertexIdx]) + std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx])]).to_vector() * distance;
+
+					CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx + 1])]).has_on(minusInfPoint));
+					CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx])]).has_on(plusInfPoint));
+
+					const auto minusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[aVertexIdx + 1]);
+					const auto plusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[aVertexIdx]) + 1;
+
+					anOutData.myVertices[minusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[aVertexIdx + 1]), minusInfPoint);
+					anOutData.myVertices[plusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[aVertexIdx]), plusInfPoint);
+
+					anOutData.myRanges[std::get<0>(anOutData.myVertices[aVertexIdx + 1])] = aVertexIdx;
 				}
 				});
 
-			hpx::sort(hpx::execution::par_unseq, anOutData.myRanges.begin(), anOutData.myRanges.end());
+			//std::cout << "1" << std::endl;
 
-			//std::cout << "Vertices Computation done" << std::endl;
+			anOutData.myMinMaxPlanes.resize(uniqueLines.size());
+			hpx::transform(hpx::execution::par_unseq, uniqueLines.begin(), uniqueLines.end(), anOutData.myMinMaxPlanes.begin(),
+				[](const auto& a) { return std::get<2>(a); });
+
+			hpx::sort(hpx::execution::par_unseq, anOutData.myVertices.begin(), anOutData.myVertices.end());
+			hpx::sort(hpx::execution::par_unseq, anOutData.myRanges.begin(), anOutData.myRanges.end());
 		}
 	}
 
@@ -518,6 +531,7 @@ namespace SPGMT
 			constexpr auto distance = 1000.f;
 			using LineWrapper = std::tuple<Point3, Point3, size_t>;
 			std::vector<LineWrapper> lines;
+
 
 			// Find intersection lines
 			for (size_t i = 0; i < somePlanes.size(); ++i)
@@ -735,8 +749,8 @@ namespace SPGMT
 		}
 
 		// Construct result
-		std::vector<Edge<Point3>> edges(data.myVertices.size() - data.myRanges.size() + 1);
-		std::atomic<size_t> edgesCount{ 0 };
+		using EdgeWrapper = std::tuple<STATUS, Edge<Point3>>;
+		std::vector<EdgeWrapper> edgesWrap(2 * data.myVertices.size());
 
 		hpx::for_loop(hpx::execution::par_unseq, 0, data.myRanges.size() - 1, [&](const size_t aRangeIdx)
 			{
@@ -744,16 +758,23 @@ namespace SPGMT
 				Edge<Point3> edge, oppEdge;
 				for (size_t i = data.myRanges[aRangeIdx]; i < data.myRanges[aRangeIdx + 1] - 1; ++i)
 				{
-					if (locIsEdgeInLowerEnvelope<policy>(somePlanes, data, aRangeIdx, i, edge, oppEdge, segmentStartIdx))
+					if (locIsEdgeInLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes, data, aRangeIdx, i, edge, oppEdge, segmentStartIdx))
 					{
-						const auto outIdx = edgesCount.fetch_add(2, std::memory_order_relaxed);
-						edges[outIdx] = edge;
-						edges[outIdx + 1] = oppEdge;
+						edgesWrap[2 * i] = std::make_tuple(STATUS::INIT, edge);
+						edgesWrap[2 * i + 1] = std::make_tuple(STATUS::INIT, oppEdge);
 					}
 				}
 			});
 
-		edges.resize(edgesCount.load());
+		// Sort vertices NEW
+		hpx::sort(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(),
+			[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+
+		locTrimToLastValidItem(edgesWrap);
+
+		std::vector<Edge<Point3>> edges(edgesWrap.size());
+		hpx::transform(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(), edges.begin(),
+			[](const auto& a) { return std::get<1>(a); });
 
 		// Sort edges
 		locSortEdgesCCW<policy>(edges);

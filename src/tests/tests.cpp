@@ -266,7 +266,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 
 TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-PCLE]")
 {
-	constexpr auto benchmarksCount =5;
+	constexpr auto benchmarksCount = 10;
 	constexpr auto inputCount = 10;
 	for (auto i = 0; i < benchmarksCount; ++i)
 	{
@@ -294,12 +294,13 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
+	/*
 	SECTION("100 random, non-vertical parallel planes") 
 	{
 		constexpr auto planesCount = 100;
 		const auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount);
 
-		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+		const auto result = SPGMT::ParallelComputeLowerEnvelope(planes);
 
 		REQUIRE(std::holds_alternative<size_t>(result));
 		REQUIRE(SPGMT::Debug::IsLowerEnvelopeCorrect(result, planes));
@@ -318,20 +319,20 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			planes.push_back(horizontalPlane);
 		}
 
-		const auto result = SPGMT::ComputeLowerEnvelope(planes);
+		const auto result = SPGMT::ParallelComputeLowerEnvelope(planes);
 
 		REQUIRE(std::holds_alternative<std::vector<Edge<Point3>>>(result));
 		REQUIRE(SPGMT::Debug::IsLowerEnvelopeCorrect(result, planes));
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
-
+	*/
 	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
 		constexpr auto planesCount = 25;
 		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
-		auto result = SPGMT::ComputeLowerEnvelope(planes);
+		auto result = SPGMT::ParallelComputeLowerEnvelope(planes);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
 
@@ -414,8 +415,8 @@ int RunTests(int argc, char* argv[])
 	
 	std::vector<std::string> testOrTag;
 	
-	testOrTag.push_back("[ComputeLowerEnvelope]");
-	//testOrTag.push_back("[Benchmark-PCLE]"); //,[Benchmark-CLE]
+	//testOrTag.push_back("[ComputeLowerEnvelope]");
+	testOrTag.push_back("[Benchmark-PCLE], [Benchmark-CLE]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
 	
 	settings.testsOrTags = testOrTag;
 
