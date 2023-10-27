@@ -97,22 +97,6 @@ namespace SPGMT
 				});
 		}
 
-		template<ExecutionPolicy E, typename T, typename F>
-		bool locAreItemsParallel(
-			const std::vector<T>& someItems,
-			const F&& aGetter)
-		{
-			CGAL_precondition(someItems.size() > 0);
-			const auto& direction = aGetter(someItems[0]);
-			const auto& oppDirection = -direction;
-			const auto result = BindExecutionPolicy<E>(hpx::all_of, std::next(someItems.begin()), someItems.end(),
-				[&](const auto& anItem) {
-					const auto& currDirection = aGetter(anItem);
-					return currDirection == direction || currDirection == oppDirection;
-				});
-			return result;
-		}
-
 		template<ExecutionPolicy E>
 		void locTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
 		{
@@ -283,21 +267,6 @@ namespace SPGMT
 
 	namespace Parallel
 	{
-		enum class STATUS
-		{
-			NONE = 0,
-			INIT = -1,
-		};
-
-		template<typename T>
-		void locTrimToLastValidItem(std::vector<T>& someOutItems)
-		{
-			// Still using a sequential version because it is fast
-			auto it = someOutItems.begin();
-			while (std::get<0>(*it) == STATUS::INIT && ++it != someOutItems.end());
-			someOutItems.resize(std::distance(someOutItems.begin(), it));
-		}
-
 		void locComputeData(const std::vector<Plane>& somePlanes, BruteForceData& anOutData)
 		{
 			static const Point3 zero{ 0,0,0 };
@@ -340,7 +309,7 @@ namespace SPGMT
 			// Sort and keep only unique lines
 			hpx::sort(hpx::execution::par_unseq, lines.begin(), lines.end());
 
-			locTrimToLastValidItem(lines);
+			Utils::TrimToLastValidItem(lines);
 
 			const auto uniqueEntriesCount =
 				static_cast<size_t>(std::distance(
@@ -348,7 +317,7 @@ namespace SPGMT
 					hpx::unique(hpx::execution::par_unseq, lines.begin(), lines.end()))) - 1;
 
 			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = locAreItemsParallel<policy>(lines,
+			const auto areAllLinesParallel = Utils::AreItemsParallel<policy>(lines,
 				[](const auto& aLine) { return Dir3{ std::get<2>(aLine) - std::get<1>(aLine) }; });
 			if (areAllLinesParallel)
 			{
@@ -426,7 +395,7 @@ namespace SPGMT
 			hpx::sort(hpx::execution::par_unseq, uniqueLines.begin(), uniqueLines.end(),
 				[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
 
-			locTrimToLastValidItem(uniqueLines);
+			Utils::TrimToLastValidItem(uniqueLines);
 
 			// Compute vertices
 			const auto maxVerticesCount = uniqueLines.size() * (uniqueLines.size());
@@ -455,7 +424,7 @@ namespace SPGMT
 			// Sort vertices NEW
 			hpx::sort(hpx::execution::par_unseq, vertices.begin(), vertices.end());
 
-			locTrimToLastValidItem(vertices);
+			Utils::TrimToLastValidItem(vertices);
 
 			const auto endUniqueIter =
 				hpx::unique(hpx::execution::par_unseq, vertices.begin(), vertices.end());
@@ -561,7 +530,7 @@ namespace SPGMT
 				static_cast<size_t>(std::distance(lines.begin(), std::unique(lines.begin(), lines.end())));
 
 			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = locAreItemsParallel<ExecutionPolicy::SEQ>(lines,
+			const auto areAllLinesParallel = Utils::AreItemsParallel<ExecutionPolicy::SEQ>(lines,
 				[](const auto& aLine) { return Dir3{ std::get<1>(aLine) - std::get<0>(aLine) }; });
 			if (areAllLinesParallel)
 			{
@@ -726,7 +695,7 @@ namespace SPGMT
 		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		//CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 
-		const auto arePlanesParallel = locAreItemsParallel<policy>(somePlanes,
+		const auto arePlanesParallel = Utils::AreItemsParallel<policy>(somePlanes,
 			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
 
 		// Edge case: all planes are parallel
@@ -770,7 +739,7 @@ namespace SPGMT
 		hpx::sort(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(),
 			[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
 
-		locTrimToLastValidItem(edgesWrap);
+		Utils::TrimToLastValidItem(edgesWrap);
 
 		std::vector<Edge<Point3>> edges(edgesWrap.size());
 		hpx::transform(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(), edges.begin(),
@@ -797,7 +766,7 @@ namespace SPGMT
 		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		//CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 
-		const auto arePlanesParallel = locAreItemsParallel<policy>(somePlanes,
+		const auto arePlanesParallel = Utils::AreItemsParallel<policy>(somePlanes,
 			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
 
 		// Edge case: all planes are parallel

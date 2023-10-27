@@ -71,18 +71,49 @@ namespace SPGMT
 		template <typename Strategy, typename T, typename K>
 		std::vector<typename Strategy::payload_type> FindIntersections(const std::vector<T>& someItems, const K& anotherItem)
 		{
+			constexpr auto policy = Strategy::GetExecutionPolicy();
 			std::vector<typename Strategy::payload_type> result;
-			for (int i = 0; i < someItems.size(); ++i)
+			if constexpr (policy != ExecutionPolicy::SEQ)
 			{
-				const auto intersection = CGAL::intersection(someItems[i], anotherItem);
+				result.resize(someItems.size());
+			}
+
+			BindExecutionPolicy<policy>(hpx::for_loop, 0, someItems.size(), [&](size_t anItemIdx) {
+				const auto intersection = CGAL::intersection(someItems[anItemIdx], anotherItem);
 				if (const auto* data = intersection.get_ptr())
 				{
 					CGAL_precondition(data != nullptr);
-					Strategy visitor{ anotherItem, i, result };
+					Strategy visitor{ anotherItem, anItemIdx, result };
 					data->apply_visitor(visitor);
 				}
-			}
+				});
+
 			return result;
+		}
+
+		template<ExecutionPolicy E, typename T, typename F>
+		bool AreItemsParallel(
+			const std::vector<T>& someItems,
+			const F&& aGetter)
+		{
+			CGAL_precondition(someItems.size() > 0);
+			const auto& direction = aGetter(someItems[0]);
+			const auto& oppDirection = -direction;
+			const auto result = BindExecutionPolicy<E>(hpx::all_of, std::next(someItems.begin()), someItems.end(),
+				[&](const auto& anItem) {
+					const auto& currDirection = aGetter(anItem);
+					return currDirection == direction || currDirection == oppDirection;
+				});
+			return result;
+		}
+
+		template<typename T>
+		void TrimToLastValidItem(std::vector<T>& someOutItems)
+		{
+			// Still using a sequential version because it is fast
+			auto it = someOutItems.begin();
+			while (std::get<0>(*it) == STATUS::INIT && ++it != someOutItems.end());
+			someOutItems.resize(std::distance(someOutItems.begin(), it));
 		}
 
 		std::vector<Plane> EnforceUpwardsOrientation(const std::vector<Plane>& somePlanes);

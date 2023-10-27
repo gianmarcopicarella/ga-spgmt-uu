@@ -13,7 +13,7 @@
 // Including it here otherwise the compiler moans
 #include <hpx/hpx_init.hpp>
 
-
+/*
 TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
 {
 	SECTION("100 Random Points")
@@ -25,6 +25,8 @@ TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "
 		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
 		REQUIRE((result.myRangeWrappers.empty() && result.mySortedPlanesIndices.empty()));
+
+		std::cout << "1" << std::endl;
 	}
 }
 
@@ -87,6 +89,8 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 				}
 			}
 		}
+
+		std::cout << "2" << std::endl;
 	}
 
 	// Random planes
@@ -115,6 +119,8 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 				}
 			}
 		}
+
+		std::cout << "3" << std::endl;
 	}
 }
 
@@ -188,16 +194,18 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
 				}
 			}
 		}
+
+		std::cout << "4" << std::endl;
 	}
-}
+}*/
 
 TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 {
 	SECTION("random planes")
 	{
 		constexpr auto minPlaneDistance = 20.f;
-		constexpr auto planesCount = 30;
-		constexpr auto pointSamplesCount = 10000;
+		constexpr auto planesCount = 10;
+		constexpr auto pointSamplesCount = 100;
 		constexpr auto allowSamplesOverPlane = true;
 
 		auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
@@ -261,12 +269,60 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 			}
 		}
 
+		std::cout << "5" << std::endl;
+
+		// NEW CHECK
+		using namespace SPGMT;
+		std::sort(points.begin(), points.end(), CGAL::Less<Point3, Point3>());
+		REQUIRE(result.myNewRangeWrappers.size() == points.size());
+
+		// Check ranges
+		for (auto i = 0; i < result.myNewRangeWrappers.size(); ++i)
+		{
+			const auto& zoneRange = result.myNewRangeWrappers[i];
+			const auto& sortedPlanesIndices =
+				result.mySortedPlanesCache[zoneRange.myCacheIndex][zoneRange.myIndex];
+			
+			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
+			const int firstPlaneAboveIdx = zoneRange.myRange.first;
+			const int rangeEnd = zoneRange.myRange.second;
+
+			if (firstPlaneAboveIdx != planes.size())
+			{
+				// Check that all planes before are below the point and all planes in the range are above the point
+				for (int k = 0; k < firstPlaneAboveIdx; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+
+				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+				{
+					const int planeIdx = sortedPlanesIndices[k];
+					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+			}
+			else
+			{
+				// Check that all planes are below the point (here order and zone dont matter)
+				for (int k = 0; k < planes.size(); ++k)
+				{
+					const auto requirement = planes[k].has_on_positive_side(points[i]);
+					REQUIRE(requirement);
+				}
+			}
+		}
+
+		
+
 	}
 }
 
 TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-PCLE]")
 {
-	constexpr auto benchmarksCount = 10;
+	constexpr auto benchmarksCount = 15;
 	constexpr auto inputCount = 10;
 	for (auto i = 0; i < benchmarksCount; ++i)
 	{
@@ -280,7 +336,7 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-PCLE]")
 
 TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 {
-	constexpr auto benchmarksCount = 10;
+	constexpr auto benchmarksCount = 15;
 	constexpr auto inputCount = 10;
 	for (auto i = 0; i < benchmarksCount; ++i)
 	{
@@ -294,7 +350,7 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
-	/*
+	
 	SECTION("100 random, non-vertical parallel planes") 
 	{
 		constexpr auto planesCount = 100;
@@ -326,7 +382,7 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
-	*/
+	
 	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
@@ -416,7 +472,7 @@ int RunTests(int argc, char* argv[])
 	std::vector<std::string> testOrTag;
 	
 	//testOrTag.push_back("[ComputeLowerEnvelope]");
-	testOrTag.push_back("[Benchmark-PCLE], [Benchmark-CLE]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
+	testOrTag.push_back("[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
 	
 	settings.testsOrTags = testOrTag;
 

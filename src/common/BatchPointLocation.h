@@ -15,8 +15,24 @@ namespace SPGMT
             int myRefIndex;
         };
 
-        std::unordered_map<int, std::vector<int>> mySortedPlanesIndices;
+        std::unordered_map<int, std::vector<size_t>> mySortedPlanesIndices;
         std::vector<RangeWrapper> myRangeWrappers;
+
+
+
+        // New storage ---------------
+        using SlabCache = std::vector<std::vector<size_t>>;
+        std::vector<SlabCache> mySortedPlanesCache;
+
+        struct NewRangeWrapper
+        {
+            Range myRange;
+            size_t myCacheIndex;
+            size_t myIndex;
+        };
+
+        std::vector<NewRangeWrapper> myNewRangeWrappers;
+
 	};
 
 	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);

@@ -100,4 +100,11 @@ namespace SPGMT
             return std::forward<Func>(aFunction)(hpx::execution::seq, std::forward<Args>(someArgs)...);
         }
     }
+
+    enum class STATUS
+    {
+        NONE = 0,
+        INIT = -1,
+    };
+
 }
