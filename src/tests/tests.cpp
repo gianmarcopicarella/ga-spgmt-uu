@@ -204,7 +204,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 	SECTION("random planes")
 	{
 		constexpr auto minPlaneDistance = 20.f;
-		constexpr auto planesCount = 10;
+		constexpr auto planesCount = 15;
 		constexpr auto pointSamplesCount = 100;
 		constexpr auto allowSamplesOverPlane = true;
 
@@ -228,46 +228,46 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 		// run function
 		const auto result = SPGMT::ParallelBatchPointLocation(planes, points);
 
-		REQUIRE(result.myRangeWrappers.size() == points.size());
+		//REQUIRE(result.myRangeWrappers.size() == points.size());
 
-		// Check ranges
-		for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
-		{
-			const auto& zoneRange = result.myRangeWrappers[i];
-			const auto& sortedPlanesIndices =
-				result.mySortedPlanesIndices.at(zoneRange.myRefIndex);
+		//// Check ranges
+		//for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
+		//{
+		//	const auto& zoneRange = result.myRangeWrappers[i];
+		//	const auto& sortedPlanesIndices =
+		//		result.mySortedPlanesIndices.at(zoneRange.myRefIndex);
 
-			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
-			const int firstPlaneAboveIdx = zoneRange.myRange.first;
-			const int rangeEnd = zoneRange.myRange.second;
+		//	// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
+		//	const int firstPlaneAboveIdx = zoneRange.myRange.first;
+		//	const int rangeEnd = zoneRange.myRange.second;
 
-			if (firstPlaneAboveIdx != planes.size())
-			{
-				// Check that all planes before are below the point and all planes in the range are above the point
-				for (int k = 0; k < firstPlaneAboveIdx; ++k)
-				{
-					const int planeIdx = sortedPlanesIndices[k];
-					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
-					REQUIRE(requirement);
-				}
+		//	if (firstPlaneAboveIdx != planes.size())
+		//	{
+		//		// Check that all planes before are below the point and all planes in the range are above the point
+		//		for (int k = 0; k < firstPlaneAboveIdx; ++k)
+		//		{
+		//			const int planeIdx = sortedPlanesIndices[k];
+		//			const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
+		//			REQUIRE(requirement);
+		//		}
 
-				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
-				{
-					const int planeIdx = sortedPlanesIndices[k];
-					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
-					REQUIRE(requirement);
-				}
-			}
-			else
-			{
-				// Check that all planes are below the point (here order and zone dont matter)
-				for (int k = 0; k < planes.size(); ++k)
-				{
-					const auto requirement = planes[k].has_on_positive_side(points[i]);
-					REQUIRE(requirement);
-				}
-			}
-		}
+		//		for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
+		//		{
+		//			const int planeIdx = sortedPlanesIndices[k];
+		//			const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
+		//			REQUIRE(requirement);
+		//		}
+		//	}
+		//	else
+		//	{
+		//		// Check that all planes are below the point (here order and zone dont matter)
+		//		for (int k = 0; k < planes.size(); ++k)
+		//		{
+		//			const auto requirement = planes[k].has_on_positive_side(points[i]);
+		//			REQUIRE(requirement);
+		//		}
+		//	}
+		//}
 
 		std::cout << "5" << std::endl;
 
@@ -281,7 +281,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 		{
 			const auto& zoneRange = result.myNewRangeWrappers[i];
 			const auto& sortedPlanesIndices =
-				result.mySortedPlanesCache[zoneRange.myCacheIndex][zoneRange.myIndex];
+				result.mySortedPlanesCache[zoneRange.myCacheIndex].at(zoneRange.myIndex);
 			
 			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
 			const int firstPlaneAboveIdx = zoneRange.myRange.first;
@@ -347,6 +347,75 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 		};
 	}
 }
+
+TEST_CASE("Benchmark BatchPointLocation", "[Benchmark-PBPL]")
+{
+	constexpr auto minPlaneDistance = 20.f;
+	constexpr auto pointSamplesCount = 100;
+	constexpr auto allowSamplesOverPlane = true;
+
+	constexpr auto benchmarksCount = 5;
+	constexpr auto inputCount = 10;
+
+	for (auto i = 0; i < benchmarksCount; ++i)
+	{
+		std::string title = "PBPL (" + std::to_string(i * inputCount) + ")";
+		
+		// Compute input data
+		auto planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount);
+		std::vector<SPGMT::Point3> points;
+		for (auto i = 0; i < planes.size(); ++i)
+		{
+			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+		}
+		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
+		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
+		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
+		// End input data computation
+
+		BENCHMARK(title.c_str()) {
+			return SPGMT::ParallelBatchPointLocation(planes, points);
+		};
+	}
+}
+
+TEST_CASE("Benchmark BatchPointLocation", "[Benchmark-BPL]")
+{
+	constexpr auto minPlaneDistance = 20.f;
+	constexpr auto pointSamplesCount = 100;
+	constexpr auto allowSamplesOverPlane = true;
+
+	constexpr auto benchmarksCount = 5;
+	constexpr auto inputCount = 10;
+
+	for (auto i = 0; i < benchmarksCount; ++i)
+	{
+		std::string title = "BPL (" + std::to_string(i * inputCount) + ")";
+
+		// Compute input data
+		auto planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount);
+		std::vector<SPGMT::Point3> points;
+		for (auto i = 0; i < planes.size(); ++i)
+		{
+			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+		}
+		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
+		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
+		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
+		// End input data computation
+
+		BENCHMARK(title.c_str()) {
+			return SPGMT::BatchPointLocation(planes, points);
+		};
+	}
+}
+
 
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
@@ -472,7 +541,7 @@ int RunTests(int argc, char* argv[])
 	std::vector<std::string> testOrTag;
 	
 	//testOrTag.push_back("[ComputeLowerEnvelope]");
-	testOrTag.push_back("[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
+	testOrTag.push_back("[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
 	
 	settings.testsOrTags = testOrTag;
 

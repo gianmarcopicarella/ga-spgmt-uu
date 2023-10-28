@@ -21,7 +21,7 @@ namespace SPGMT
 
 
         // New storage ---------------
-        using SlabCache = std::vector<std::vector<size_t>>;
+        using SlabCache = std::unordered_map<size_t, std::vector<size_t>>;
         std::vector<SlabCache> mySortedPlanesCache;
 
         struct NewRangeWrapper
