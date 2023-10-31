@@ -12,7 +12,7 @@ namespace SPGMT
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*/1306513302/*4169948633*/ };
+		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/ };
 		return rand;
 	}
 
