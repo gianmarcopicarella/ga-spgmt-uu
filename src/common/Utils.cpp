@@ -54,9 +54,10 @@ namespace SPGMT
 		Point3 SingleDualMapping(const Plane& aPlane)
 		{
 			CGAL_precondition(locIsValidPlaneForDuality(aPlane));
+			CGAL_precondition(aPlane.c() == FT(-1));
 			const auto& x = aPlane.a();
 			const auto& y = aPlane.b();
-			const auto& z = -aPlane.c();
+			const auto& z = -aPlane.d();
 			return Point3{ x,y,z };
 		}
 
@@ -65,8 +66,8 @@ namespace SPGMT
 			CGAL_precondition(locIsValidPointForDuality(aPoint));
 			const auto& a = aPoint.x();
 			const auto& b = aPoint.y();
-			const auto& c = -aPoint.z();
-			const auto& d = a + b + c;
+			const auto& c = -1.f;
+			const auto& d = -aPoint.z();
 			return Plane{ a,b,c,d };
 		}
 
@@ -97,25 +98,10 @@ namespace SPGMT
 			return result;
 		}
 
-		std::vector<Plane> EnforceUpwardsOrientation(const std::vector<Plane>& somePlanes)
+		bool IsPlaneFacingUp(const Plane& aPlane)
 		{
-			std::vector<Plane> result;
-			result.reserve(somePlanes.size());
-			const Vec3 up{ 0,0,1 };
-
-			for (auto i = 0; i < somePlanes.size(); ++i)
-			{
-				if (CGAL::scalar_product(up, somePlanes[i].orthogonal_vector()) < 0.f)
-				{
-					result.push_back(Plane{ somePlanes[i].point(), -somePlanes[i].orthogonal_vector() });
-				}
-				else
-				{
-					result.push_back(somePlanes[i]);
-				}
-			}
-
-			return result;
+			static const Vec3 up{ 0,0,1 };
+			return CGAL::sign(CGAL::scalar_product(up, aPlane.orthogonal_vector())) != CGAL::Sign::NEGATIVE;
 		}
 	}
 }

@@ -8,22 +8,6 @@ namespace SPGMT
 {
 	namespace Utils
 	{
-		struct PlanePlaneVisitor
-		{
-			typedef Line3 payload_type;
-			typedef void result_type;
-			void operator()(const Line3& aLine)
-			{
-				myOutResult.push_back(aLine);
-			}
-			void operator()(const Plane& aPlane)
-			{
-				CGAL_precondition(false);
-			}
-
-			std::vector<payload_type>& myOutResult;
-		};
-
 		template<typename T>
 		bool AreItemsUnique(const std::vector<T>& someItems)
 		{
@@ -68,6 +52,7 @@ namespace SPGMT
 			}
 			return result;
 		}
+
 		template <typename Strategy, typename T, typename K>
 		std::vector<typename Strategy::payload_type> FindIntersections(const std::vector<T>& someItems, const K& anotherItem)
 		{
@@ -107,6 +92,8 @@ namespace SPGMT
 			return result;
 		}
 
+		bool IsPlaneFacingUp(const Plane& aPlane);
+
 		template<typename T>
 		void TrimToLastValidItem(std::vector<T>& someOutItems)
 		{
@@ -115,8 +102,6 @@ namespace SPGMT
 			while (std::get<0>(*it) == STATUS::INIT && ++it != someOutItems.end());
 			someOutItems.resize(std::distance(someOutItems.begin(), it));
 		}
-
-		std::vector<Plane> EnforceUpwardsOrientation(const std::vector<Plane>& somePlanes);
 
 		Point3 SingleDualMapping(const Plane& aPlane);
 		Plane SingleDualMapping(const Point3& aPoint);

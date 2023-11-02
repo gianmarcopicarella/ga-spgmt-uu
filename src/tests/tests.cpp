@@ -487,51 +487,41 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 	}
 }
 
-bool locIsPlaneFacingUpwards(const SPGMT::Plane& aPlane)
-{
-	using namespace SPGMT;
-	static const Vec3 up{ 0,0,1 };
-	return CGAL::sign(CGAL::scalar_product(up, aPlane.orthogonal_vector())) != CGAL::Sign::NEGATIVE;
-}
-
 TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[DualityMap]")
 {
 	SECTION("A point above a plane should become a plane below a point")
 	{
 		using namespace SPGMT;
 
-		constexpr auto planesCount = 100;
+		constexpr auto itemsCount = 1000;
+		constexpr auto distance = 10.f;
 
-		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
-		std::vector<Point3> points;
+		const auto& startingPlanes = Debug::RandomPlaneSamplingTest(itemsCount);
+		std::vector<Point3> startingPoints;
+		startingPoints.reserve(itemsCount);
 
-		for (const auto& plane : planes)
+		for (const auto& plane : startingPlanes)
 		{
-			points.emplace_back(plane.point() + plane.orthogonal_vector() * 10.f);
-			REQUIRE(plane.has_on_positive_side(points.back()));
+			startingPoints.emplace_back(plane.point() + plane.orthogonal_vector() * distance);
+			REQUIRE(plane.has_on_positive_side(startingPoints.back()));
 		}
 
-		// Apply duality
-		const auto& dualPoints = Utils::DualMapping(points);
-		const auto& dualPlanes = Utils::DualMapping(planes);
+		// Apply duality transform
+		const auto& dualizedPlanes = Utils::DualMapping(startingPlanes);
+		const auto& dualizedPoints = Utils::DualMapping(startingPoints);
 
-		// Check property
-		for (int i = 0; i < planesCount; ++i)
+		// Check reverse order property
+		for (int i = 0; i < itemsCount; ++i)
 		{
-			std::cout << "Plane: " << dualPoints[i] << ", Point: " << dualPlanes[i] << std::endl;
-
-			if (locIsPlaneFacingUpwards(dualPoints[i]))
+			if (Utils::IsPlaneFacingUp(dualizedPoints[i]))
 			{
-				REQUIRE(!dualPoints[i].has_on_positive_side(dualPlanes[i]));
+				REQUIRE(!dualizedPoints[i].has_on_positive_side(dualizedPlanes[i]));
 			}
 			else
 			{
-				REQUIRE(!dualPoints[i].has_on_negative_side(dualPlanes[i]));
+				REQUIRE(!dualizedPoints[i].has_on_negative_side(dualizedPlanes[i]));
 			}
-
-
 		}
-
 	}
 }
 
@@ -561,7 +551,7 @@ int RunTests(int argc, char* argv[])
 	std::vector<std::string> testOrTag;
 
 	//testOrTag.push_back("[ComputeLowerEnvelope]");
-	testOrTag.push_back("[BatchPointLocation]");//[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
+	testOrTag.push_back("[DualityMap]");//[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
 
 	settings.testsOrTags = testOrTag;
 

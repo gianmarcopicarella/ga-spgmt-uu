@@ -433,5 +433,32 @@ namespace SPGMT
 
 			return samples;
 		}
+
+
+		// Still testing
+		std::vector<Plane> RandomPlaneSamplingTest(const size_t aSamplesCount, const double aMinHeight, const double aMaxHeight)
+		{
+			CGAL::Random random{ GetDefaultRandom() };
+			std::vector<Plane> samples;
+			samples.reserve(aSamplesCount);
+
+			while (samples.size() < aSamplesCount)
+			{
+				const auto a = random.get_double(-1.f, 1.f);
+				const auto b = random.get_double(-1.f, 1.f);
+				constexpr auto c = -1.f;
+				const auto d = random.get_double(aMinHeight, aMaxHeight);
+				
+				const Plane plane{ a, b, c, d };
+				const auto isPlaneUnique = std::find(samples.begin(), samples.end(), plane) == samples.end();
+
+				if (isPlaneUnique)
+				{
+					samples.push_back(plane);
+				}
+			}
+
+			return samples;
+		}
 	}
 }

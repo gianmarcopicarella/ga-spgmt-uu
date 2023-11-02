@@ -24,6 +24,10 @@ namespace SPGMT
 		};
 		bool IsLowerEnvelopeCorrect(const SPGMT::LowerEnvelope3d& aLowerEnvelope, const std::vector<SPGMT::Plane>& somePlanes);
 		//LowerEnvelope2d GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes);
+
+		// TESTING
+		std::vector<Plane> RandomPlaneSamplingTest(const size_t aSamplesCount, const double aMinHeight = -100.f, const double aMaxHeight = 100.f);
+
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount);
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount);
 		std::vector<Point3> Uniform3DCubeSampling(const double anHalfSide, const int aSampleCount);
