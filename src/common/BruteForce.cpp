@@ -97,95 +97,29 @@ namespace SPGMT
 				});
 		}
 
-		template<ExecutionPolicy E>
-		void locTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
-		{
-			CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
-			auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);
-			CGAL_precondition(edges.size() > 2);
-			BindExecutionPolicy<E>(hpx::sort, edges.begin(), edges.end(), [](const auto& aFirstEdge, const auto& aSecondEdge)
-				{
-					return aFirstEdge.myLowestLeftPlane < aSecondEdge.myLowestLeftPlane ||
-						(aFirstEdge.myLowestLeftPlane == aSecondEdge.myLowestLeftPlane && aFirstEdge.myType < aSecondEdge.myType);
-				});
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				auto boundaryStartIt = edges.begin();
-				std::vector<Edge<Point3>> temporaryEdges;
-
-				for (size_t i = 1, lastStart = 0, edgesOldSize = edges.size(); i < edgesOldSize; ++i)
-				{
-					if (edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane ||
-						i == edgesOldSize - 1)
-					{
-						for (size_t k = lastStart + 1; k < i; ++k)
-						{
-							edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[i].myEnd, EdgeType::SEGMENT_TRIANGLE });
-							edges.emplace_back(Edge<Point3>{ edges[i].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
-						}
-						lastStart = i;
-					}
-				}
-			}
-			else
-			{
-				// Dummy upper bound
-				std::vector<size_t> ranges(edges.size() / 2);
-				std::atomic<size_t> atomicCounter{ 1 };
-				ranges.front() = 0;
-				BindExecutionPolicy<E>(hpx::for_loop, 1, edges.size(), [&](size_t anEdgeIdx) {
-					if (edges[anEdgeIdx].myLowestLeftPlane != edges[anEdgeIdx - 1].myLowestLeftPlane)
-					{
-						ranges[atomicCounter.fetch_add(1, std::memory_order_relaxed)] = anEdgeIdx;
-					}
-					});
-
-				ranges.resize(atomicCounter.fetch_xor(atomicCounter.load()) + 1);
-				ranges.back() = edges.size();
-
-				const auto prevEdgesCount = edges.size();
-				atomicCounter.store(prevEdgesCount);
-
-				// Dummy upper-bound
-				edges.resize(prevEdgesCount * 3);
-
-				BindExecutionPolicy<E>(hpx::for_loop, 0, ranges.size() - 1, [&](size_t aRangeIdx) {
-					BindExecutionPolicy<E>(hpx::for_loop, ranges[aRangeIdx] + 1, ranges[aRangeIdx + 1], [&](size_t anEdgeIdx) {
-						const auto& startEdge = edges[ranges[aRangeIdx]];
-						const auto storeIdx = atomicCounter.fetch_add(2, std::memory_order_relaxed);
-
-						edges[storeIdx].myType = EdgeType::SEGMENT_TRIANGLE;
-						edges[storeIdx].myStart = startEdge.myStart;
-						edges[storeIdx].myEnd = edges[anEdgeIdx].myEnd;
-
-						edges[storeIdx + 1].myType = EdgeType::SEGMENT_TRIANGLE;
-						edges[storeIdx + 1].myStart = edges[anEdgeIdx].myEnd;
-						edges[storeIdx + 1].myEnd = startEdge.myStart;
-						});
-					});
-
-				edges.resize(atomicCounter.fetch_xor(atomicCounter.load()) - prevEdgesCount);
-			}
-
-			locSortEdgesCCW<E>(edges);
-		}
-
 		void locInsertInfinityPoints(
 			const std::tuple<size_t, Point3>& aMinPoint,
 			const std::tuple<size_t, Point3>& aMaxPoint,
-			const Line3& aFirstLine,
-			const Line3& aSecondLine,
-			std::vector<std::tuple<size_t, Point3>>::iterator anOutIter)
+			const std::vector<Line3>& someUniqueLines,
+			const size_t aFiniteVerticesCount,
+			std::vector<std::tuple<size_t, Point3>>& someOutVertices)
 		{
 			constexpr auto distance = 1000.f;
-			const auto& minusInfPoint = std::get<1>(aMinPoint) - aFirstLine.to_vector() * distance;
-			const auto& plusInfPoint = std::get<1>(aMaxPoint) + aSecondLine.to_vector() * distance;
 
-			CGAL_precondition(aFirstLine.has_on(minusInfPoint));
-			CGAL_precondition(aSecondLine.has_on(plusInfPoint));
+			const auto minLineIdx = std::get<0>(aMinPoint);
+			const auto maxLineIdx = std::get<0>(aMaxPoint);
 
-			*anOutIter = std::make_tuple(std::get<0>(aMinPoint), minusInfPoint);
-			*(anOutIter + 1) = std::make_tuple(std::get<0>(aMaxPoint), plusInfPoint);
+			const auto& minusInfPoint = std::get<1>(aMinPoint) - someUniqueLines[minLineIdx].to_vector() * distance;
+			const auto& plusInfPoint = std::get<1>(aMaxPoint) + someUniqueLines[maxLineIdx].to_vector() * distance;
+
+			CGAL_precondition(someUniqueLines[minLineIdx].has_on(minusInfPoint));
+			CGAL_precondition(someUniqueLines[maxLineIdx].has_on(plusInfPoint));
+
+			const auto minusInfOutIdx = aFiniteVerticesCount + 2 * minLineIdx;
+			const auto plusInfOutIdx = aFiniteVerticesCount + 2 * maxLineIdx + 1;
+
+			someOutVertices[minusInfOutIdx] = std::make_tuple(minLineIdx, minusInfPoint);
+			someOutVertices[plusInfOutIdx] = std::make_tuple(maxLineIdx, plusInfPoint);
 		}
 
 		struct BruteForceData
@@ -263,236 +197,8 @@ namespace SPGMT
 			}
 			return false;
 		}
-	}
 
-	namespace Parallel
-	{
-		void locComputeData(const std::vector<Plane>& somePlanes, BruteForceData& anOutData)
-		{
-			static const Point3 zero{ 0,0,0 };
-			constexpr auto policy = ExecutionPolicy::PAR_UNSEQ;
-			const auto maxLinesCount = somePlanes.size() * (somePlanes.size());
-			using LineWrapper = std::tuple<STATUS, Point3, Point3, size_t>;
-
-			std::vector<LineWrapper> lines(maxLinesCount);
-
-			// Find intersection lines
-			hpx::for_loop(hpx::execution::par_unseq, 0, somePlanes.size(), [&](size_t aPlaneIdx)
-				{
-					//auto startOutIdx = outStart[aPlaneIdx];
-					hpx::for_loop(hpx::execution::par_unseq, aPlaneIdx + 1, somePlanes.size(), [&](size_t anotherPlaneIdx)
-						{
-							const auto intersection =
-								CGAL::intersection(somePlanes[aPlaneIdx], somePlanes[anotherPlaneIdx]);
-							if (intersection)
-							{
-								const Line3* line = boost::get<Line3>(&*intersection);
-								CGAL_precondition(line != nullptr);
-
-								auto start = line->projection(zero);
-								auto end = start + line->to_vector() * FT(1000.f);
-								if (start > end) std::swap(start, end);
-								CGAL_precondition(start < end);
-
-								const auto outFirstIdx = aPlaneIdx * somePlanes.size() + anotherPlaneIdx;
-								const auto outSecondIdx = anotherPlaneIdx * somePlanes.size() + aPlaneIdx;
-
-								CGAL_precondition(std::get<0>(lines[outFirstIdx]) == STATUS::NONE);
-								CGAL_precondition(std::get<0>(lines[outSecondIdx]) == STATUS::NONE);
-
-								lines[outFirstIdx] = std::make_tuple(STATUS::INIT, start, end, aPlaneIdx);
-								lines[outSecondIdx] = std::make_tuple(STATUS::INIT, start, end, anotherPlaneIdx);
-							}
-						});
-				});
-
-			// Sort and keep only unique lines
-			hpx::sort(hpx::execution::par_unseq, lines.begin(), lines.end());
-
-			Utils::TrimToLastValidItem(lines);
-
-			const auto uniqueEntriesCount =
-				static_cast<size_t>(std::distance(
-					lines.begin(),
-					hpx::unique(hpx::execution::par_unseq, lines.begin(), lines.end()))) - 1;
-
-			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = Utils::AreItemsParallel<policy>(lines,
-				[](const auto& aLine) { return Dir3{ std::get<2>(aLine) - std::get<1>(aLine) }; });
-			if (areAllLinesParallel)
-			{
-				static const Point3 zero{ 0,0,0 };
-
-				const auto virtualLinesEnd = lines.begin() + uniqueEntriesCount;
-
-				auto lineIter =
-					hpx::find_if(hpx::execution::par_unseq, lines.begin(), virtualLinesEnd,
-						[&](const auto& aLine) { return locIsVertexInLowerEnvelope<policy>(somePlanes, std::get<1>(aLine)); });
-
-				while (lineIter != lines.begin() && std::get<3>(*lineIter) == std::get<3>(*(lineIter - 1))) { --lineIter; }
-
-				CGAL_precondition(lineIter != virtualLinesEnd);
-				const auto& lowerEnvelopeLine = Line3{ std::get<1>(*lineIter), std::get<2>(*lineIter) };
-
-				std::vector<size_t> planesIndices;
-				for (auto iter = lineIter;
-					iter != virtualLinesEnd &&
-					std::get<3>(*iter) == std::get<3>(*lineIter); ++iter)
-				{
-					planesIndices.emplace_back(std::get<3>(*iter));
-				}
-
-				const auto minMaxPlanes = locGetMinMaxSteepPlaneIndices<policy>(lowerEnvelopeLine, somePlanes, planesIndices);
-
-				constexpr auto distance = 1000.f;
-				const auto& start = lowerEnvelopeLine.projection(zero);
-				const auto& end = start + lowerEnvelopeLine.to_vector() * distance;
-
-				std::vector<Edge<Point3>> edges(2);
-				edges[0].myStart = start < end ? start : end;
-				edges[0].myEnd = start < end ? end : start;
-				edges[0].myLowestLeftPlane = minMaxPlanes.first;
-				edges[0].myType = EdgeType::LINE;
-				edges[1].myStart = edges[0].myEnd;
-				edges[1].myEnd = edges[0].myStart;
-				edges[1].myType = EdgeType::LINE;
-				edges[1].myLowestLeftPlane = minMaxPlanes.second;
-
-				anOutData.myLowerEnvelopeOpt = edges;
-				return;
-			}
-
-			// Collect min-max planes and unique lines
-			using UniqueLineWrapper = std::tuple<STATUS, Line3, std::tuple<size_t, size_t>>;
-			std::vector<UniqueLineWrapper> uniqueLines(uniqueEntriesCount);
-
-			hpx::for_loop(hpx::execution::par_unseq, 0, uniqueEntriesCount, [&](size_t aLineIdx) {
-				if (aLineIdx == 0 ||
-					std::get<1>(lines[aLineIdx]) != std::get<1>(lines[aLineIdx - 1]) ||
-					std::get<2>(lines[aLineIdx]) != std::get<2>(lines[aLineIdx - 1]))
-				{
-					std::vector<size_t> planesIndices;
-					planesIndices.emplace_back(std::get<3>(lines[aLineIdx]));
-
-					for (size_t i = aLineIdx + 1;
-						i < lines.size() &&
-						std::get<1>(lines[aLineIdx]) == std::get<1>(lines[i]) &&
-						std::get<2>(lines[aLineIdx]) == std::get<2>(lines[i]); ++i)
-					{
-						planesIndices.emplace_back(std::get<3>(lines[i]));
-					}
-
-					const auto& outLine = Line3{ std::get<1>(lines[aLineIdx]), std::get<2>(lines[aLineIdx]) };
-					const auto& minMaxPlanes = locGetMinMaxSteepPlaneIndices<ExecutionPolicy::SEQ>(outLine, somePlanes, planesIndices);
-
-					CGAL_precondition(std::get<0>(uniqueLines[aLineIdx]) == STATUS::NONE);
-
-					uniqueLines[aLineIdx] = std::make_tuple(STATUS::INIT, outLine, minMaxPlanes);
-				}
-				});
-
-			// Sort and keep only unique lines
-			hpx::sort(hpx::execution::par_unseq, uniqueLines.begin(), uniqueLines.end(),
-				[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-
-			Utils::TrimToLastValidItem(uniqueLines);
-
-			// Compute vertices
-			const auto maxVerticesCount = uniqueLines.size() * (uniqueLines.size());
-
-			using VertexWrapper = std::tuple<STATUS, size_t, Point3>;
-			std::vector<VertexWrapper> vertices(maxVerticesCount);
-
-			hpx::for_loop(hpx::execution::par_unseq, 0, uniqueLines.size(), [&](size_t aLineIdx) {
-				hpx::for_loop(hpx::execution::par_unseq, aLineIdx + 1, uniqueLines.size(), [&](size_t anotherLineIdx) {
-					const auto intersection = CGAL::intersection(std::get<1>(uniqueLines[aLineIdx]), std::get<1>(uniqueLines[anotherLineIdx]));
-					if (intersection)
-					{
-						const Point3* point = boost::get<Point3>(&*intersection);
-						CGAL_precondition(point != nullptr);
-						//const auto outIndex = atomicCount.fetch_add(2, std::memory_order_relaxed);
-
-						const auto outFirstIdx = aLineIdx * uniqueLines.size() + anotherLineIdx;
-						const auto outSecondIdx = anotherLineIdx * uniqueLines.size() + aLineIdx;
-
-						vertices[outFirstIdx] = std::make_tuple(STATUS::INIT, aLineIdx, *point);
-						vertices[outSecondIdx] = std::make_tuple(STATUS::INIT, anotherLineIdx, *point);
-					}
-					});
-				});
-
-			// Sort vertices NEW
-			hpx::sort(hpx::execution::par_unseq, vertices.begin(), vertices.end());
-
-			Utils::TrimToLastValidItem(vertices);
-
-			const auto endUniqueIter =
-				hpx::unique(hpx::execution::par_unseq, vertices.begin(), vertices.end());
-			vertices.erase(endUniqueIter, vertices.end());
-
-
-			anOutData.myVertices.resize(vertices.size() + 2 * uniqueLines.size());
-			hpx::transform(hpx::execution::par_unseq, vertices.begin(), vertices.end(), anOutData.myVertices.begin(),
-				[](const auto& a) { return std::make_tuple(std::get<1>(a), std::get<2>(a)); });
-
-			//std::cout << "Done sorting" << std::endl;
-
-			anOutData.myRanges.resize(uniqueLines.size() + 1);
-			anOutData.myRanges.front() = 0;
-			anOutData.myRanges.back() = anOutData.myVertices.size();
-
-			const auto finiteVerticesCount = vertices.size();
-
-			// Compute points at infinity
-			{
-				constexpr auto distance = 1000.f;
-				const auto& minusInfPoint = std::get<1>(anOutData.myVertices[0]) - std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[0])]).to_vector() * distance;
-				const auto& plusInfPoint = std::get<1>(anOutData.myVertices[vertices.size() - 1]) + std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[vertices.size() - 1])]).to_vector() * distance;
-
-				CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[0])]).has_on(minusInfPoint));
-				CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[vertices.size() - 1])]).has_on(plusInfPoint));
-
-				const auto minusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[0]);
-				const auto plusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[vertices.size() - 1]) + 1;
-
-				anOutData.myVertices[minusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[0]), minusInfPoint);
-				anOutData.myVertices[plusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[vertices.size() - 1]), plusInfPoint);
-			}
-
-			hpx::for_loop(hpx::execution::par_unseq, 1, finiteVerticesCount - 1, [&](size_t aVertexIdx) {
-				if (std::get<0>(anOutData.myVertices[aVertexIdx]) <
-					std::get<0>(anOutData.myVertices[aVertexIdx + 1]))
-				{
-					constexpr auto distance = 1000.f;
-					const auto& minusInfPoint = std::get<1>(anOutData.myVertices[aVertexIdx + 1]) - std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx + 1])]).to_vector() * distance;
-					const auto& plusInfPoint = std::get<1>(anOutData.myVertices[aVertexIdx]) + std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx])]).to_vector() * distance;
-
-					CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx + 1])]).has_on(minusInfPoint));
-					CGAL_precondition(std::get<1>(uniqueLines[std::get<0>(anOutData.myVertices[aVertexIdx])]).has_on(plusInfPoint));
-
-					const auto minusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[aVertexIdx + 1]);
-					const auto plusInfOutIdx = finiteVerticesCount + 2 * std::get<0>(anOutData.myVertices[aVertexIdx]) + 1;
-
-					anOutData.myVertices[minusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[aVertexIdx + 1]), minusInfPoint);
-					anOutData.myVertices[plusInfOutIdx] = std::make_tuple(std::get<0>(anOutData.myVertices[aVertexIdx]), plusInfPoint);
-
-					anOutData.myRanges[std::get<0>(anOutData.myVertices[aVertexIdx + 1])] = aVertexIdx;
-				}
-				});
-
-			//std::cout << "1" << std::endl;
-
-			anOutData.myMinMaxPlanes.resize(uniqueLines.size());
-			hpx::transform(hpx::execution::par_unseq, uniqueLines.begin(), uniqueLines.end(), anOutData.myMinMaxPlanes.begin(),
-				[](const auto& a) { return std::get<2>(a); });
-
-			hpx::sort(hpx::execution::par_unseq, anOutData.myVertices.begin(), anOutData.myVertices.end());
-			hpx::sort(hpx::execution::par_unseq, anOutData.myRanges.begin(), anOutData.myRanges.end());
-		}
-	}
-
-	namespace Sequential
-	{
+		template<ExecutionPolicy E = ExecutionPolicy::SEQ>
 		void locComputeData(const std::vector<Plane>& somePlanes, BruteForceData& anOutData)
 		{
 			static const Point3 zero{ 0,0,0 };
@@ -501,58 +207,96 @@ namespace SPGMT
 			using LineWrapper = std::tuple<Point3, Point3, size_t>;
 			std::vector<LineWrapper> lines;
 
-
-			// Find intersection lines
-			for (size_t i = 0; i < somePlanes.size(); ++i)
+			const auto planePlaneIntersection = [&](size_t i, size_t k, std::atomic<size_t>* anOutCounterPtr)
 			{
-				for (size_t k = i + 1; k < somePlanes.size(); ++k)
+				const auto intersection =
+					CGAL::intersection(somePlanes[i], somePlanes[k]);
+				if (intersection)
 				{
-					const auto intersection =
-						CGAL::intersection(somePlanes[i], somePlanes[k]);
-					if (intersection)
+					const Line3* line = boost::get<Line3>(&*intersection);
+					CGAL_precondition(line != nullptr);
+
+					auto start = line->projection(zero);
+					auto end = start + line->to_vector() * FT(distance);
+					if (start > end) std::swap(start, end);
+					CGAL_precondition(start < end);
+
+					if constexpr (E == ExecutionPolicy::SEQ)
 					{
-						const Line3* line = boost::get<Line3>(&*intersection);
-						CGAL_precondition(line != nullptr);
-
-						auto start = line->projection(zero);
-						auto end = start + line->to_vector() * FT(distance);
-						if (start > end) std::swap(start, end);
-						CGAL_precondition(start < end);
-
 						lines.emplace_back(std::make_tuple(start, end, i));
 						lines.emplace_back(std::make_tuple(start, end, k));
 					}
+					else
+					{
+						CGAL_precondition(anOutCounterPtr != nullptr);
+						const auto outIdx = anOutCounterPtr->fetch_add(2, std::memory_order_relaxed);
+						lines[outIdx] = std::make_tuple(start, end, i);
+						lines[outIdx + 1] = std::make_tuple(start, end, k);
+					}
+				}
+			};
+
+			// Find intersection lines
+			if constexpr (E == ExecutionPolicy::SEQ)
+			{
+				for (size_t i = 0; i < somePlanes.size(); ++i)
+				{
+					for (size_t k = i + 1; k < somePlanes.size(); ++k)
+					{
+						planePlaneIntersection(i, k, nullptr);
+					}
 				}
 			}
+			else
+			{
+				lines.resize(somePlanes.size() * (somePlanes.size() - 1));
+				std::atomic<size_t> counter{ 0 };
+				BindExecutionPolicy<E>(hpx::for_loop, 0, somePlanes.size(), [&](size_t i) {
+					BindExecutionPolicy<E>(hpx::for_loop, i + 1, somePlanes.size(), [&](size_t k) {
+						planePlaneIntersection(i, k, &counter);
+						});
+					});
+				lines.resize(counter.load());
+			}
 
-			std::sort(lines.begin(), lines.end());
-			const auto uniqueEntriesCount =
-				static_cast<size_t>(std::distance(lines.begin(), std::unique(lines.begin(), lines.end())));
+			BindExecutionPolicy<E>(hpx::sort, lines.begin(), lines.end());
+
+			lines.erase(BindExecutionPolicy<E>(hpx::unique, lines.begin(), lines.end()), lines.end());
 
 			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = Utils::AreItemsParallel<ExecutionPolicy::SEQ>(lines,
+			const auto areAllLinesParallel = Utils::AreItemsParallel<E>(lines,
 				[](const auto& aLine) { return Dir3{ std::get<1>(aLine) - std::get<0>(aLine) }; });
 			if (areAllLinesParallel)
 			{
-				const auto virtualLinesEnd = lines.begin() + uniqueEntriesCount;
-
-				auto lineIter =
-					std::find_if(lines.begin(), virtualLinesEnd,
-						[&](const auto& aLine) { return locIsVertexInLowerEnvelope<policy>(somePlanes, std::get<0>(aLine)); });
-
-				CGAL_precondition(lineIter != virtualLinesEnd);
-				const auto& lowerEnvelopeLine = Line3{ std::get<0>(*lineIter), std::get<1>(*lineIter) };
+				auto lineIter = BindExecutionPolicy<E>(hpx::find_if, lines.begin(), lines.end(),
+					[&](const auto& aLine) { return locIsVertexInLowerEnvelope<E>(somePlanes, std::get<1>(aLine)); });
 
 				std::vector<size_t> planesIndices;
-				for (auto iter = lineIter;
-					iter != virtualLinesEnd &&
-					std::get<2>(*iter) == std::get<2>(*lineIter); ++iter)
+
+				for (auto it = lineIter;
+					it != lines.end() &&
+					std::get<0>(*lineIter) == std::get<0>(*it) &&
+					std::get<1>(*lineIter) == std::get<1>(*it);
+					++it)
 				{
-					planesIndices.emplace_back(std::get<2>(*iter));
+					planesIndices.emplace_back(std::get<2>(*it));
 				}
 
-				const auto minMaxPlanes = locGetMinMaxSteepPlaneIndices<policy>(lowerEnvelopeLine, somePlanes, planesIndices);
+				if constexpr (E != ExecutionPolicy::SEQ)
+				{
+					using RI = std::vector<LineWrapper>::reverse_iterator;
+					for (RI it = std::make_reverse_iterator(std::prev(lineIter));
+						it != lines.rend() &&
+						std::get<0>(*lineIter) == std::get<0>(*it) &&
+						std::get<1>(*lineIter) == std::get<1>(*it);
+						++it)
+					{
+						planesIndices.emplace_back(std::get<2>(*it));
+					}
+				}
 
+				const Line3 lowerEnvelopeLine{ std::get<0>(*lineIter), std::get<1>(*lineIter) };
+				const auto minMaxPlanes = locGetMinMaxSteepPlaneIndices<E>(lowerEnvelopeLine, somePlanes, planesIndices);
 				const auto& start = lowerEnvelopeLine.projection(zero);
 				const auto& end = start + lowerEnvelopeLine.to_vector() * distance;
 
@@ -572,130 +316,164 @@ namespace SPGMT
 
 			// Compute min-max planes and unique lines
 			std::vector<Line3> uniqueLines;
-			uniqueLines.emplace_back(Line3{ std::get<0>(lines[0]), std::get<1>(lines[1]) });
 
+			const auto uniqueLinesSelection = [&](size_t i, std::atomic<size_t>* aCounterPtr)
 			{
-				std::vector<size_t> uniquePlanes;
-				uniquePlanes.emplace_back(std::get<2>(lines[2]));
+				std::vector<size_t> indices;
 
-				for (size_t i = 1, lastIdx = 0; i < uniqueEntriesCount; ++i)
+				size_t k = i;
+				while (k < lines.size() &&
+					std::get<0>(lines[k]) == std::get<0>(lines[i]) &&
+					std::get<1>(lines[k]) == std::get<1>(lines[i]))
 				{
-					if (std::get<0>(lines[lastIdx]) != std::get<0>(lines[i]) ||
-						std::get<1>(lines[lastIdx]) != std::get<1>(lines[i]))
-					{
-						anOutData.myMinMaxPlanes.emplace_back(
-							locGetMinMaxSteepPlaneIndices<policy>(uniqueLines.back(), somePlanes, uniquePlanes)
-						);
-						uniqueLines.emplace_back(Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) });
-						uniquePlanes.clear();
-						lastIdx = i;
-					}
-
-					uniquePlanes.emplace_back(std::get<2>(lines[i]));
+					indices.emplace_back(std::get<2>(lines[k++]));
 				}
 
-				anOutData.myMinMaxPlanes.emplace_back(
-					locGetMinMaxSteepPlaneIndices<policy>(uniqueLines.back(), somePlanes, uniquePlanes)
-				);
+				constexpr auto innerPolicy = ExecutionPolicy::SEQ;
+
+				if constexpr (E == ExecutionPolicy::SEQ)
+				{
+					uniqueLines.emplace_back(Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) });
+					anOutData.myMinMaxPlanes.emplace_back(
+						locGetMinMaxSteepPlaneIndices<innerPolicy>(uniqueLines.back(), somePlanes, indices));
+				}
+				else
+				{
+					CGAL_precondition(aCounterPtr != nullptr);
+					const auto outIdx = aCounterPtr->fetch_add(1, std::memory_order_relaxed);
+					uniqueLines[outIdx] = Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) };
+					anOutData.myMinMaxPlanes[outIdx] =
+						locGetMinMaxSteepPlaneIndices<innerPolicy>(uniqueLines[outIdx], somePlanes, indices);
+				}
+
+				return k;
+			};
+
+			if constexpr (E == ExecutionPolicy::SEQ)
+			{
+				size_t i = 0;
+				while ((i = uniqueLinesSelection(i, nullptr)) < lines.size());
+			}
+			else
+			{
+				uniqueLines.resize(lines.size() / 2);
+				anOutData.myMinMaxPlanes.resize(lines.size() / 2);
+				std::atomic<size_t> counter{ 0 };
+
+				BindExecutionPolicy<E>(hpx::for_loop, uniqueLinesSelection(0, &counter), lines.size(), [&](size_t i) {
+					if (std::get<0>(lines[i - 1]) != std::get<0>(lines[i]) ||
+						std::get<1>(lines[i - 1]) != std::get<1>(lines[i]))
+					{
+						uniqueLinesSelection(i, &counter);
+					}
+					});
+
+				anOutData.myMinMaxPlanes.resize(counter.load());
+				uniqueLines.resize(counter.load());
 			}
 
-			// Compute vertices
-			for (size_t i = 0; i < uniqueLines.size(); ++i)
+			const auto lineLineIntersection = [&](size_t i, size_t k, std::atomic<size_t>* aCounterPtr)
 			{
-				for (size_t k = i + 1; k < uniqueLines.size(); ++k)
+				const auto intersection =
+					CGAL::intersection(uniqueLines[i], uniqueLines[k]);
+				if (intersection)
 				{
-					const auto intersection =
-						CGAL::intersection(uniqueLines[i], uniqueLines[k]);
-					if (intersection)
+					const Point3* point = boost::get<Point3>(&*intersection);
+					CGAL_precondition(point != nullptr);
+
+					if constexpr (E == ExecutionPolicy::SEQ)
 					{
-						const Point3* point = boost::get<Point3>(&*intersection);
-						CGAL_precondition(point != nullptr);
 						anOutData.myVertices.emplace_back(std::make_tuple(i, *point));
 						anOutData.myVertices.emplace_back(std::make_tuple(k, *point));
 					}
+					else
+					{
+						CGAL_precondition(aCounterPtr != nullptr);
+						const auto outIdx = aCounterPtr->fetch_add(2, std::memory_order_relaxed);
+						anOutData.myVertices[outIdx] = std::make_tuple(i, *point);
+						anOutData.myVertices[outIdx + 1] = std::make_tuple(k, *point);
+					}
+				}
+			};
+
+			// Compute vertices
+			if constexpr (E == ExecutionPolicy::SEQ)
+			{
+				for (size_t i = 0; i < uniqueLines.size(); ++i)
+				{
+					for (size_t k = i + 1; k < uniqueLines.size(); ++k)
+					{
+						lineLineIntersection(i, k, nullptr);
+					}
 				}
 			}
-
-			// Sort vertices
-			std::sort(anOutData.myVertices.begin(), anOutData.myVertices.begin());
-
-			// Compute points at infinity
+			else
 			{
-				anOutData.myVertices.emplace_back(); anOutData.myVertices.emplace_back();
-				locInsertInfinityPoints(
-					anOutData.myVertices[0],
-					*(anOutData.myVertices.end() - 3),
-					uniqueLines[std::get<0>(anOutData.myVertices[0])],
-					uniqueLines[std::get<0>(*(anOutData.myVertices.end() - 3))],
-					anOutData.myVertices.end() - 2);
+				anOutData.myVertices.resize(uniqueLines.size() * (uniqueLines.size() - 1));
+				std::atomic<size_t> counter{ 0 };
+
+				BindExecutionPolicy<E>(hpx::for_loop, 0, uniqueLines.size(), [&](size_t i) {
+					BindExecutionPolicy<E>(hpx::for_loop, i + 1, uniqueLines.size(), [&](size_t k) {
+						lineLineIntersection(i, k, &counter);
+						});
+					});
+
+				anOutData.myVertices.resize(counter.load());
 			}
 
-			const auto prevSize = anOutData.myVertices.size() - 3;
-			for (size_t i = 1; i < prevSize; ++i)
-			{
+			// Sort and remove duplicate vertices
+			BindExecutionPolicy<E>(hpx::sort, anOutData.myVertices.begin(), anOutData.myVertices.end());
+			anOutData.myVertices.erase(
+				BindExecutionPolicy<E>(hpx::unique, anOutData.myVertices.begin(), anOutData.myVertices.end()), anOutData.myVertices.end());
+
+			const auto finiteVerticesCount = anOutData.myVertices.size();
+			anOutData.myVertices.resize(finiteVerticesCount + 2 * uniqueLines.size());
+
+			anOutData.myRanges.resize(uniqueLines.size() + 1);
+			anOutData.myRanges.front() = 0;
+			anOutData.myRanges.back() = anOutData.myVertices.size();
+
+			// Compute points at infinity for first and last vertex in vector
+			locInsertInfinityPoints(
+				anOutData.myVertices[0],
+				anOutData.myVertices[finiteVerticesCount - 1],
+				uniqueLines, finiteVerticesCount, anOutData.myVertices);
+
+			BindExecutionPolicy<E>(hpx::for_loop, 1, finiteVerticesCount - 1, [&](size_t i) {
 				if (std::get<0>(anOutData.myVertices[i]) <
 					std::get<0>(anOutData.myVertices[i + 1]))
 				{
-					anOutData.myVertices.emplace_back(); anOutData.myVertices.emplace_back();
 					locInsertInfinityPoints(
 						anOutData.myVertices[i + 1],
 						anOutData.myVertices[i],
-						uniqueLines[std::get<0>(anOutData.myVertices[i + 1])],
-						uniqueLines[std::get<0>(anOutData.myVertices[i])],
-						anOutData.myVertices.end() - 2);
+						uniqueLines, finiteVerticesCount, anOutData.myVertices);
+
+					const auto nextLineIdx = std::get<0>(anOutData.myVertices[i + 1]);
+					anOutData.myRanges[nextLineIdx] = (i + 1) + 2 * nextLineIdx;
 				}
-			}
+				});
 
-			std::sort(anOutData.myVertices.begin(), anOutData.myVertices.end());
-
-			// Remove duplicates and store line ranges
-			auto first = anOutData.myVertices.begin();
-			const auto last = anOutData.myVertices.end();
-			auto result = first;
-			auto lastLineIdx = std::get<0>(*first);
-			auto vertexIdx = 0;
-			anOutData.myRanges.emplace_back(0);
-
-			while (++first != last)
-			{
-				if (!(*result == *first))
-				{
-					++vertexIdx;
-					if (++result != first)
-					{
-						*result = std::move(*first);
-					}
-
-					const auto currLineIdx = std::get<0>(*result);
-					if (lastLineIdx != currLineIdx)
-					{
-						lastLineIdx = currLineIdx;
-						anOutData.myRanges.emplace_back(vertexIdx);
-					}
-				}
-			}
-
-			anOutData.myVertices.erase(++result, anOutData.myVertices.end());
-			anOutData.myRanges.emplace_back(anOutData.myVertices.size());
+			// Sort vertices
+			BindExecutionPolicy<E>(hpx::sort, anOutData.myVertices.begin(), anOutData.myVertices.end());
+			BindExecutionPolicy<E>(hpx::sort, anOutData.myRanges.begin(), anOutData.myRanges.end());
 		}
 	}
 
-	LowerEnvelope3d ParallelComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
+	template<ExecutionPolicy E>
+	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
 	{
-		using namespace Parallel;
-		constexpr auto policy = ExecutionPolicy::PAR_UNSEQ;
-		constexpr auto distance = 1000.f;
-
 		if (somePlanes.empty())
 		{
 			return LowerEnvelope3d{};
 		}
+
+		constexpr auto distance = 1000.f;
 
 		// Requirements check (TEMPORARY DISABLED)
 		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		//CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 
-		const auto arePlanesParallel = Utils::AreItemsParallel<policy>(somePlanes,
+		const auto arePlanesParallel = Utils::AreItemsParallel<E>(somePlanes,
 			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
 
 		// Edge case: all planes are parallel
@@ -704,127 +482,145 @@ namespace SPGMT
 			static const Point3 origin{ 0,0,0 };
 			std::vector<size_t> indices(somePlanes.size());
 			std::iota(indices.begin(), indices.end(), 0);
-			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<policy>(somePlanes, indices, origin);
+			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<E>(somePlanes, indices, origin);
 			CGAL_precondition(std::get<0>(minMaxPlanes) != -1);
 			return std::get<0>(minMaxPlanes);
 		}
 
 		BruteForceData data;
-		locComputeData(somePlanes, data);
+		locComputeData<E>(somePlanes, data);
 
 		if (data.myLowerEnvelopeOpt.has_value())
 		{
 			return data.myLowerEnvelopeOpt.value();
 		}
 
-		// Construct result
-		using EdgeWrapper = std::tuple<STATUS, Edge<Point3>>;
-		std::vector<EdgeWrapper> edgesWrap(2 * data.myVertices.size());
-
-		hpx::for_loop(hpx::execution::par_unseq, 0, data.myRanges.size() - 1, [&](const size_t aRangeIdx)
-			{
-				int segmentStartIdx = -1;
-				Edge<Point3> edge, oppEdge;
-				for (size_t i = data.myRanges[aRangeIdx]; i < data.myRanges[aRangeIdx + 1] - 1; ++i)
-				{
-					if (locIsEdgeInLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes, data, aRangeIdx, i, edge, oppEdge, segmentStartIdx))
-					{
-						edgesWrap[2 * i] = std::make_tuple(STATUS::INIT, edge);
-						edgesWrap[2 * i + 1] = std::make_tuple(STATUS::INIT, oppEdge);
-					}
-				}
-			});
-
-		// Sort vertices NEW
-		hpx::sort(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(),
-			[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-
-		Utils::TrimToLastValidItem(edgesWrap);
-
-		std::vector<Edge<Point3>> edges(edgesWrap.size());
-		hpx::transform(hpx::execution::par_unseq, edgesWrap.begin(), edgesWrap.end(), edges.begin(),
-			[](const auto& a) { return std::get<1>(a); });
-
-		// Sort edges
-		locSortEdgesCCW<policy>(edges);
-
-		return edges;
-	}
-
-	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
-	{
-		using namespace Sequential;
-		constexpr auto policy = ExecutionPolicy::SEQ;
-		constexpr auto distance = 1000.f;
-
-		if (somePlanes.empty())
-		{
-			return LowerEnvelope3d{};
-		}
-
-		// Requirements check (TEMPORARY)
-		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
-		//CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
-
-		const auto arePlanesParallel = Utils::AreItemsParallel<policy>(somePlanes,
-			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
-
-		// Edge case: all planes are parallel
-		if (arePlanesParallel)
-		{
-			static const Point3 origin{ 0,0,0 };
-			std::vector<size_t> indices(somePlanes.size());
-			std::iota(indices.begin(), indices.end(), 0);
-			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<policy>(somePlanes, indices, origin);
-			CGAL_precondition(std::get<0>(minMaxPlanes) != -1);
-			return std::get<0>(minMaxPlanes);
-		}
-
-		BruteForceData data;
-		locComputeData(somePlanes, data);
-
-		// Edge case: no triple of planes intersect
-		if (data.myLowerEnvelopeOpt.has_value())
-		{
-			return data.myLowerEnvelopeOpt.value();
-		}
-
-		// Construct result
 		std::vector<Edge<Point3>> edges;
 
-		for (size_t rangeIdx = 0; rangeIdx < data.myRanges.size() - 1; ++rangeIdx)
+		const auto buildEdges = [&](size_t aRangeIdx, std::atomic<size_t>* aCounterPtr)
 		{
 			int segmentStartIdx = -1;
 			Edge<Point3> edge, oppEdge;
-			for (size_t i = data.myRanges[rangeIdx]; i < data.myRanges[rangeIdx + 1] - 1; ++i)
+			for (size_t i = data.myRanges[aRangeIdx]; i < data.myRanges[aRangeIdx + 1] - 1; ++i)
 			{
-				if (locIsEdgeInLowerEnvelope<policy>(somePlanes, data, rangeIdx, i, edge, oppEdge, segmentStartIdx))
+				if (locIsEdgeInLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes, data, aRangeIdx, i, edge, oppEdge, segmentStartIdx))
 				{
-					edges.emplace_back(edge);
-					edges.emplace_back(oppEdge);
+					if constexpr (E == ExecutionPolicy::SEQ)
+					{
+						edges.emplace_back(edge);
+						edges.emplace_back(oppEdge);
+					}
+					else
+					{
+						CGAL_precondition(aCounterPtr != nullptr);
+						const auto outIdx = aCounterPtr->fetch_add(2, std::memory_order_relaxed);
+						edges[outIdx] = edge;
+						edges[outIdx + 1] = oppEdge;
+					}
 				}
 			}
+		};
+
+		if constexpr (E == ExecutionPolicy::SEQ)
+		{
+			for (size_t rangeIdx = 0; rangeIdx < data.myRanges.size() - 1; ++rangeIdx)
+			{
+				buildEdges(rangeIdx, nullptr);
+			}
+		}
+		else
+		{
+			edges.resize(2 * data.myVertices.size());
+			std::atomic<size_t> counter{ 0 };
+
+			BindExecutionPolicy<E>(hpx::for_loop, 0, data.myRanges.size() - 1, [&](const size_t aRangeIdx)
+				{
+					buildEdges(aRangeIdx, &counter);
+				});
+			edges.resize(counter.load());
 		}
 
 		// Sort edges
-		locSortEdgesCCW<policy>(edges);
+		locSortEdgesCCW<E>(edges);
 
 		return edges;
 	}
 
+	template<ExecutionPolicy E>
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
 	{
-		constexpr auto policy = ExecutionPolicy::SEQ;
-		locTriangulateLowerEnvelope<policy>(anOutLowerEnvelope);
+		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
+		auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);
+		CGAL_precondition(edges.size() > 2);
+		BindExecutionPolicy<E>(hpx::sort, edges.begin(), edges.end(), [](const auto& aFirstEdge, const auto& aSecondEdge)
+			{
+				return aFirstEdge.myLowestLeftPlane < aSecondEdge.myLowestLeftPlane ||
+					(aFirstEdge.myLowestLeftPlane == aSecondEdge.myLowestLeftPlane && aFirstEdge.myType < aSecondEdge.myType);
+			});
+		if constexpr (E == ExecutionPolicy::SEQ)
+		{
+			auto boundaryStartIt = edges.begin();
+			std::vector<Edge<Point3>> temporaryEdges;
+
+			for (size_t i = 1, lastStart = 0, edgesOldSize = edges.size(); i < edgesOldSize; ++i)
+			{
+				if (edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane ||
+					i == edgesOldSize - 1)
+				{
+					for (size_t k = lastStart + 1; k < i; ++k)
+					{
+						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[i].myEnd, EdgeType::SEGMENT_TRIANGLE });
+						edges.emplace_back(Edge<Point3>{ edges[i].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
+					}
+					lastStart = i;
+				}
+			}
+		}
+		else
+		{
+			// Dummy upper bound
+			std::vector<size_t> ranges(edges.size() / 2);
+			std::atomic<size_t> atomicCounter{ 1 };
+			ranges.front() = 0;
+			BindExecutionPolicy<E>(hpx::for_loop, 1, edges.size(), [&](size_t anEdgeIdx) {
+				if (edges[anEdgeIdx].myLowestLeftPlane != edges[anEdgeIdx - 1].myLowestLeftPlane)
+				{
+					ranges[atomicCounter.fetch_add(1, std::memory_order_relaxed)] = anEdgeIdx;
+				}
+				});
+
+			ranges.resize(atomicCounter.fetch_xor(atomicCounter.load()) + 1);
+			ranges.back() = edges.size();
+
+			const auto prevEdgesCount = edges.size();
+			atomicCounter.store(prevEdgesCount);
+
+			// Dummy upper-bound
+			edges.resize(prevEdgesCount * 3);
+
+			BindExecutionPolicy<E>(hpx::for_loop, 0, ranges.size() - 1, [&](size_t aRangeIdx) {
+				BindExecutionPolicy<E>(hpx::for_loop, ranges[aRangeIdx] + 1, ranges[aRangeIdx + 1], [&](size_t anEdgeIdx) {
+					const auto& startEdge = edges[ranges[aRangeIdx]];
+					const auto storeIdx = atomicCounter.fetch_add(2, std::memory_order_relaxed);
+
+					edges[storeIdx].myType = EdgeType::SEGMENT_TRIANGLE;
+					edges[storeIdx].myStart = startEdge.myStart;
+					edges[storeIdx].myEnd = edges[anEdgeIdx].myEnd;
+
+					edges[storeIdx + 1].myType = EdgeType::SEGMENT_TRIANGLE;
+					edges[storeIdx + 1].myStart = edges[anEdgeIdx].myEnd;
+					edges[storeIdx + 1].myEnd = startEdge.myStart;
+					});
+				});
+
+			edges.resize(atomicCounter.fetch_xor(atomicCounter.load()) - prevEdgesCount);
+		}
+
+		locSortEdgesCCW<E>(edges);
 	}
 
-	void ParallelTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
-	{
-		constexpr auto policy = ExecutionPolicy::PAR_UNSEQ;
-		locTriangulateLowerEnvelope<policy>(anOutLowerEnvelope);
-	}
-
-	size_t CountUniqueVertices(const LowerEnvelope3d& aLowerEnvelope)
+	template<ExecutionPolicy E>
+	size_t CountVerticesInLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope)
 	{
 		if (std::holds_alternative<std::monostate>(aLowerEnvelope))
 		{
@@ -843,13 +639,31 @@ namespace SPGMT
 			// Dummy upper bound
 			std::vector<Point3> vertices(edges.size() / 2);
 
-			hpx::transform(hpx::execution::seq, edges.begin(), edges.end(), vertices.begin(),
+			BindExecutionPolicy<E>(hpx::transform, edges.begin(), edges.end(), vertices.begin(),
 				[](const auto& anEdge) { return anEdge.myStart; });
-			hpx::sort(hpx::execution::seq, vertices.begin(), vertices.end(), CGAL::Less<Point3, Point3>());
+
+			BindExecutionPolicy<E>(hpx::sort, vertices.begin(), vertices.end(), CGAL::Less<Point3, Point3>());
+
 			const auto uniqueEndIter =
-				hpx::unique(hpx::execution::seq, vertices.begin(), vertices.end(), CGAL::Equal_to<Point3, Point3>());
+				BindExecutionPolicy<E>(hpx::unique, vertices.begin(), vertices.end(), CGAL::Equal_to<Point3, Point3>());
 
 			return static_cast<size_t>(std::distance(vertices.begin(), uniqueEndIter));
 		}
 	}
+
+	// ------------------------------------------------
+	// Explicit instantiation for each execution policy
+	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::SEQ>(const std::vector<Plane>& somePlanes);
+	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::PAR>(const std::vector<Plane>& somePlanes);
+	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(const std::vector<Plane>& somePlanes);
+
+	// Explicit instantiation for each execution policy
+	template void TriangulateLowerEnvelope<ExecutionPolicy::SEQ>(LowerEnvelope3d& anOutLowerEnvelope);
+	template void TriangulateLowerEnvelope<ExecutionPolicy::PAR>(LowerEnvelope3d& anOutLowerEnvelope);
+	template void TriangulateLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(LowerEnvelope3d& anOutLowerEnvelope);
+
+	// Explicit instantiation for each execution policy
+	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::SEQ>(const LowerEnvelope3d& aLowerEnvelope);
+	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR>(const LowerEnvelope3d& aLowerEnvelope);
+	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(const LowerEnvelope3d& aLowerEnvelope);
 }

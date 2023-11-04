@@ -4,14 +4,12 @@
 
 namespace SPGMT
 {
+	template<ExecutionPolicy E>
 	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
 
-	LowerEnvelope3d ParallelComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
-
+	template<ExecutionPolicy E>
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope);
 
-	void ParallelTriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope);
-
-	// Trivial to parallelize
-	size_t CountUniqueVertices(const LowerEnvelope3d& aLowerEnvelope);
+	template<ExecutionPolicy E>
+	size_t CountVerticesInLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
 }

@@ -21,7 +21,6 @@ namespace SPGMT
         std::vector<RangeWrapper> myRangeWrappers;
 	};
 
-	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);
-
-    BatchPointResult ParallelBatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);
+    template<ExecutionPolicy E>
+    BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);
 }

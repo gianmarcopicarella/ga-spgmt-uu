@@ -2,6 +2,7 @@
 #include "../common/Utils.h"
 
 #include <vector>
+#include <functional>
 
 namespace SPGMT
 {
@@ -186,25 +187,21 @@ namespace SPGMT
 				});
 		}
 
-		///
-		template<typename T, typename K>
-		size_t locBinarySearchNew(
-			const std::vector<T>& someItems,
-			const std::vector<size_t>& someSortedIndices,
-			const K& aPoint)
+		template<typename K, typename F>
+		size_t locGeometricBinarySearch(
+			const K& aPoint,
+			const size_t anItemsCount,
+			F&& anItemGetter)
 		{
-			CGAL_precondition(someItems.size() > 0);
-			int left = 0, right = someSortedIndices.size();
+			CGAL_precondition(anItemsCount > 0);
+			int left = 0, right = anItemsCount;
 			while (left < right)
 			{
-				const size_t mid = left + (right - left) / 2;
-				const auto& item = someItems[someSortedIndices[mid]];
-
-				const auto side = item.has_on(aPoint);
-
+				const auto mid = left + (right - left) / 2;
+				const auto& item = anItemGetter(mid);
 				if (item.has_on_negative_side(aPoint))
 				{
-					if (mid == 0 || someItems[someSortedIndices[mid - 1]].has_on_positive_side(aPoint))
+					if (mid == 0 || anItemGetter(mid - 1).has_on_positive_side(aPoint))
 					{
 						return mid;
 					}
@@ -215,8 +212,8 @@ namespace SPGMT
 				}
 				else if (item.has_on_positive_side(aPoint))
 				{
-					if (mid == someSortedIndices.size() - 1 ||
-						someItems[someSortedIndices[mid + 1]].has_on_negative_side(aPoint))
+					if (mid == anItemsCount - 1 ||
+						anItemGetter(mid + 1).has_on_negative_side(aPoint))
 					{
 						return mid + 1;
 					}
@@ -227,7 +224,7 @@ namespace SPGMT
 				}
 				else
 				{
-					if (mid == 0 || (mid > 0 && !someItems[someSortedIndices[mid - 1]].has_on(aPoint)))
+					if (mid == 0 || (mid > 0 && !anItemGetter(mid - 1).has_on(aPoint)))
 					{
 						return mid;
 					}
@@ -240,85 +237,57 @@ namespace SPGMT
 
 			// MUST NEVER REACH THIS AREA
 			CGAL_precondition(false);
+			return SIZE_MAX;
 		}
 
-		template<typename T, typename K>
-		size_t locBinarySearchNew(
-			const std::vector<T>& someItems,
-			const K& aPoint)
+		enum class SlabSearchType
 		{
-			CGAL_precondition(someItems.size() > 0);
-			int left = 0, right = someItems.size();
+			INTERNAL, EXTERNAL
+		};
+
+		template<SlabSearchType T, typename F>
+		std::tuple<size_t, bool> locSlabBinarySearch(
+			const FT& aValue,
+			const size_t anItemsCount,
+			F&& anItemGetter)
+		{
+			CGAL_precondition(anItemsCount > 0);
+			int left = 0, right = anItemsCount;
 			while (left < right)
 			{
 				const size_t mid = left + (right - left) / 2;
-				const auto& item = someItems[mid];
-				if (item.has_on_negative_side(aPoint))
+				const auto& item = anItemGetter(mid);
+				if (aValue < item)
 				{
-					if (mid == 0 || someItems[mid - 1].has_on_positive_side(aPoint))
+					if (mid == 0 || aValue > anItemGetter(mid - 1))
 					{
-						return mid;
+						if constexpr (T == SlabSearchType::INTERNAL)
+						{
+							return std::make_tuple(mid, false);
+						}
+						else
+						{
+							return std::make_tuple(mid - 1, false);
+						}
 					}
 					else
 					{
 						right = mid;
 					}
 				}
-				else if (item.has_on_positive_side(aPoint))
+				else if (aValue > item)
 				{
-					if (mid == someItems.size() - 1 ||
-						someItems[mid + 1].has_on_negative_side(aPoint))
+					if (mid == anItemsCount - 1 ||
+						aValue < anItemGetter(mid + 1))
 					{
-						return mid + 1;
-					}
-					else
-					{
-						left = mid + 1;
-					}
-				}
-				else
-				{
-					if (mid == 0 || (mid > 0 && !someItems[mid - 1].has_on(aPoint)))
-					{
-						return mid;
-					}
-					else
-					{
-						right = mid;
-					}
-				}
-			}
-
-			// MUST NEVER REACH THIS AREA
-			CGAL_precondition(false);
-		}
-
-		std::tuple<size_t, bool> locFindSegmentOrVertexIndex(
-			const std::vector<FT>& someValues,
-			const Point2& aQuery)
-		{
-			CGAL_precondition(someValues.size() > 0);
-			int left = 0, right = someValues.size();
-			while (left < right)
-			{
-				const size_t mid = left + (right - left) / 2;
-				if (aQuery.y() < someValues[mid])
-				{
-					if (mid == 0 || aQuery.y() > someValues[mid - 1])
-					{
-						return std::make_tuple(mid, false);
-					}
-					else
-					{
-						right = mid;
-					}
-				}
-				else if (aQuery.y() > someValues[mid])
-				{
-					if (mid == someValues.size() - 1 ||
-						aQuery.y() < someValues[mid + 1])
-					{
-						return std::make_tuple(mid + 1, false);
+						if constexpr (T == SlabSearchType::INTERNAL)
+						{
+							return std::make_tuple(mid + 1, false);
+						}
+						else
+						{
+							return std::make_tuple(mid, false);
+						}
 					}
 					else
 					{
@@ -333,50 +302,8 @@ namespace SPGMT
 
 			// It should never reach this area
 			CGAL_postcondition(false);
+			return std::make_tuple(SIZE_MAX, false);
 		}
-
-		size_t locFindSlabIndex(
-			const std::vector<std::tuple<FT, std::vector<FT>>>& someSlabs,
-			const Point2& aQuery)
-		{
-			CGAL_precondition(someSlabs.size() > 0);
-			int left = 0, right = someSlabs.size();
-			while (left < right)
-			{
-				const size_t mid = left + (right - left) / 2;
-				if (aQuery.x() < std::get<0>(someSlabs[mid]))
-				{
-					if (aQuery.x() > std::get<0>(someSlabs[mid - 1]))
-					{
-						return mid - 1;
-					}
-					else
-					{
-						right = mid;
-					}
-				}
-				else if (aQuery.x() > std::get<0>(someSlabs[mid]))
-				{
-					if (aQuery.x() < std::get<0>(someSlabs[mid + 1]))
-					{
-						return mid;
-					}
-					else
-					{
-						left = mid + 1;
-					}
-				}
-				else
-				{
-					return mid;
-				}
-			}
-
-			// MUST NEVER REACH THIS AREA
-			CGAL_precondition(false);
-		}
-		/////
-
 
 		template<ExecutionPolicy E>
 		void locComputeData(
@@ -474,7 +401,9 @@ namespace SPGMT
 				const auto GetAreaIdx = [&](size_t aPointIdx)
 				{
 					const Point2 projectedPoint{ somePoints[aPointIdx].x(), somePoints[aPointIdx].y() };
-					const size_t firstUpperLineIdx = locBinarySearchNew<Line2, Point2>(anOutData.myLines, sortedLinesIndices, projectedPoint);
+					const size_t firstUpperLineIdx = locGeometricBinarySearch(projectedPoint, sortedLinesIndices.size(), [&](size_t i) {
+						return anOutData.myLines[sortedLinesIndices[i]];
+						});
 					const auto isPointAlongLine = firstUpperLineIdx < sortedLinesIndices.size() &&
 						anOutData.myLines[sortedLinesIndices[firstUpperLineIdx]].has_on(projectedPoint);
 
@@ -497,8 +426,8 @@ namespace SPGMT
 				BindExecutionPolicy<E>(hpx::for_loop, 0, somePoints.size(), [&](size_t aPointIdx) {
 					const auto cacheIdx = areaIndices[aPointIdx];
 					const auto& sortedPlanesIndices = result.mySortedPlanesCache[0].at(cacheIdx);
-					const auto firstUpperPlaneIdx = locBinarySearchNew<Plane, Point3>(somePlanes, sortedPlanesIndices,
-						somePoints[aPointIdx]);
+					const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[aPointIdx], sortedPlanesIndices.size(),
+						[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
 					using Res = BatchPointResult::RangeWrapper;
 					result.myRangeWrappers[aPointIdx] = Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, 0, cacheIdx };
 					});
@@ -629,213 +558,212 @@ namespace SPGMT
 				anOutData.mySlabs.emplace_back(endEntry);
 			}
 		}
+	}
 
-		template<ExecutionPolicy E>
-		BatchPointResult locBatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
+	template<ExecutionPolicy E>
+	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
+	{
+		if (somePlanes.empty() || somePoints.empty())
 		{
-			if (somePlanes.empty() || somePoints.empty())
-			{
-				return BatchPointResult{};
-			}
+			return BatchPointResult{};
+		}
 
-			// Requirements check (TEMPORARY DISABLED)
-			// CGAL_precondition(Utils::AreItemsUnique(somePlanes));
-			// CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
-			// CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
+		// Requirements check (TEMPORARY DISABLED)
+		// CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		// CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
+		// CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
 
-			// 1st edge case: single or parallel planes
-			const auto arePlanesParallel = Utils::AreItemsParallel<E>(somePlanes,
-				[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
+		// 1st edge case: single or parallel planes
+		const auto arePlanesParallel = Utils::AreItemsParallel<E>(somePlanes,
+			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
 
-			if (arePlanesParallel)
-			{
-				BatchPointResult result;
-
-				const auto line = somePlanes[0].perpendicular_line(somePlanes[0].point());
-				const auto& sortedPlanesIndices =
-					locGetSortedItemsByIntersection<LinePlaneVisitor<E>>(somePlanes, line);
-
-				result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
-				result.mySortedPlanesCache[0].insert(std::make_pair(0, sortedPlanesIndices));
-				result.myRangeWrappers.resize(somePoints.size());
-
-				hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
-					const auto firstUpperPlaneIdx = locBinarySearchNew<Plane, Point3>(somePlanes, sortedPlanesIndices, somePoints[aPointIdx]);
-					result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, 0, 0 };
-					});
-
-				return result;
-			}
-
-			BatchPointLocationData newData;
-
-			locComputeData<E>(somePlanes, somePoints, newData);
-
-			if (newData.myBatchPointResultOpt.has_value())
-			{
-				return newData.myBatchPointResultOpt.value();
-			}
-
+		if (arePlanesParallel)
+		{
 			BatchPointResult result;
 
-			std::vector<std::tuple<Point3, size_t, size_t>> queryPoints(somePoints.size());
+			const auto line = somePlanes[0].perpendicular_line(somePlanes[0].point());
+			const auto& sortedPlanesIndices =
+				locGetSortedItemsByIntersection<LinePlaneVisitor<E>>(somePlanes, line);
 
-			BindExecutionPolicy<E>(hpx::for_loop, 0, somePoints.size(),
-				[&](size_t aPointIdx) { queryPoints[aPointIdx] = std::make_tuple(somePoints[aPointIdx], aPointIdx, 0); });
+			result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
+			result.mySortedPlanesCache[0].insert(std::make_pair(0, sortedPlanesIndices));
+			result.myRangeWrappers.resize(somePoints.size());
 
-			BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end());
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				const Point2 projectedPoint{ std::get<0>(queryPoints[0]).x(), std::get<0>(queryPoints[0]).y() };
-				const auto startSlabIdx = locFindSlabIndex(newData.mySlabs, projectedPoint);
-				for (size_t i = startSlabIdx, k = 0; i < newData.mySlabs.size() - 1 && k < queryPoints.size(); ++i)
-				{
-					while (k < queryPoints.size() && std::get<0>(queryPoints[k]).x() < std::get<0>(newData.mySlabs[i + 1]))
-					{
-						std::get<2>(queryPoints[k++]) = i;
-					}
-				}
-			}
-			else
-			{
-				std::atomic<size_t> counter{ 0 };
-
-				const auto runningThreadsCount = hpx::resource::get_num_threads();
-				const auto chunkSize = static_cast<size_t>(std::ceil(queryPoints.size() / (float)runningThreadsCount));
-
-				// Additional checks on chunk size to take to most appropriate decision here
-
-				BindExecutionPolicy<E>(hpx::for_loop_strided, 0, queryPoints.size(), chunkSize,
-					[&](size_t aChunkStartIdx) {
-						const Point2 projectedPoint{ std::get<0>(queryPoints[aChunkStartIdx]).x(), std::get<0>(queryPoints[aChunkStartIdx]).y() };
-						const auto startSlabIdx = locFindSlabIndex(newData.mySlabs, projectedPoint);
-						const auto chunkEnd = std::min<size_t>(aChunkStartIdx + chunkSize, queryPoints.size());
-
-						for (auto i = startSlabIdx, k = aChunkStartIdx; i < newData.mySlabs.size() - 1 && k < chunkEnd; ++i)
-						{
-							counter.fetch_add(1, std::memory_order_relaxed);
-							while (k < chunkEnd && std::get<0>(queryPoints[k]).x() < std::get<0>(newData.mySlabs[i + 1]))
-							{
-								std::get<2>(queryPoints[k++]) = i;
-							}
-						}
-					});
-
-				result.mySortedPlanesCache.resize(counter.load());
-			}
-
-			BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end(),
-				[](const auto& a, const auto& b) { return std::get<2>(a) < std::get<2>(b); });
-
-			result.myRangeWrappers.resize(queryPoints.size());
-
-			const auto queryPointsProcessing = [&](size_t aPointIdx, size_t claimedIdx)
-			{
-				const size_t rangeStartIdx = aPointIdx;
-				while (++aPointIdx < queryPoints.size() && std::get<2>(queryPoints[aPointIdx]) == std::get<2>(queryPoints[rangeStartIdx]));
-				const size_t rangeEndIdx = aPointIdx;
-
-				const auto& slab = newData.mySlabs[std::get<2>(queryPoints[rangeStartIdx])];
-
-				bool hasVerticalLine = locHasVerticalLine(std::get<0>(slab), newData.myLines, newData.myNonVerticalLinesCount);
-				const auto& sortedLines = locGetSortedLines<ExecutionPolicy::SEQ>(std::get<0>(slab), newData.myLines, newData.myNonVerticalLinesCount);
-
-				auto& cache = result.mySortedPlanesCache[claimedIdx];
-
-				const auto GetAreaIdx = [&](const size_t aPointIdx)
-				{
-					const Point2 projectedPoint{ std::get<0>(queryPoints[aPointIdx]).x(), std::get<0>(queryPoints[aPointIdx]).y() };
-					const auto verticesCount = std::get<1>(slab).size();
-					auto cacheIdx = -1;
-
-					if (projectedPoint.x() == std::get<0>(slab))
-					{
-						const auto test = locFindSegmentOrVertexIndex(std::get<1>(slab), projectedPoint);
-						if (std::get<1>(test))
-						{
-							// Vertex
-							cacheIdx = std::get<0>(test);
-						}
-						else if (hasVerticalLine)
-						{
-							// Vertical segment
-							cacheIdx = cache.size() - (verticesCount + 1) + std::get<0>(test);
-						}
-					}
-					else
-					{
-						const auto lineIdx = locBinarySearchNew(sortedLines, projectedPoint);
-						if (lineIdx < sortedLines.size() && sortedLines[lineIdx].has_on(projectedPoint))
-						{
-							// Line
-							cacheIdx = verticesCount + lineIdx;
-						}
-						else
-						{
-							// Area
-							cacheIdx = verticesCount + sortedLines.size() + lineIdx;
-						}
-					}
-
-					CGAL_postcondition(cacheIdx > -1);
-					return cacheIdx;
-				};
-
-				std::vector<size_t> areaIndices;
-				locFillRequiredCacheEntries<ExecutionPolicy::SEQ>(somePlanes, queryPoints, rangeStartIdx, rangeEndIdx, GetAreaIdx, areaIndices, cache);
-
-				hpx::for_loop(hpx::execution::seq, rangeStartIdx, rangeEndIdx, [&](size_t aPointIdx) {
-					const auto cacheIdx = areaIndices[aPointIdx - rangeStartIdx];
-					const auto& sortedPlanesIndices = cache.at(cacheIdx);
-					const auto firstUpperPlaneIdx = locBinarySearchNew<Plane, Point3>(somePlanes, sortedPlanesIndices,
-						std::get<0>(queryPoints[aPointIdx]));
-					using Res = BatchPointResult::RangeWrapper;
-					result.myRangeWrappers[std::get<1>(queryPoints[aPointIdx])] =
-						Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, claimedIdx, cacheIdx };
-					});
-				return rangeEndIdx;
-			};
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				size_t i = 0;
-				while (i < queryPoints.size())
-				{
-					const auto claimedIdx = result.mySortedPlanesCache.size();
-					result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
-					i = queryPointsProcessing(i, claimedIdx);
-				}
-			}
-			else
-			{
-				std::atomic<size_t> counter{ 0 };
-
-				BindExecutionPolicy<E>(hpx::for_loop, 0, queryPoints.size(),
-					[&](size_t aPointIdx) {
-						if (aPointIdx == 0 ||
-							std::get<2>(queryPoints[aPointIdx]) != std::get<2>(queryPoints[aPointIdx - 1]))
-						{
-							queryPointsProcessing(aPointIdx, counter.fetch_add(1, std::memory_order_relaxed));
-						}
-					});
-
-				result.mySortedPlanesCache.resize(counter.load());
-			}
+			hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
+				const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[aPointIdx], sortedPlanesIndices.size(),
+				[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
+			result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, 0, 0 };
+				});
 
 			return result;
 		}
+
+		BatchPointLocationData data;
+
+		locComputeData<E>(somePlanes, somePoints, data);
+
+		if (data.myBatchPointResultOpt.has_value())
+		{
+			return data.myBatchPointResultOpt.value();
+		}
+
+		BatchPointResult result;
+
+		std::vector<std::tuple<Point3, size_t, size_t>> queryPoints(somePoints.size());
+
+		BindExecutionPolicy<E>(hpx::for_loop, 0, somePoints.size(),
+			[&](size_t aPointIdx) { queryPoints[aPointIdx] = std::make_tuple(somePoints[aPointIdx], aPointIdx, 0); });
+
+		BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end());
+
+		if constexpr (E == ExecutionPolicy::SEQ)
+		{
+			const Point2 projectedPoint{ std::get<0>(queryPoints[0]).x(), std::get<0>(queryPoints[0]).y() };
+			const auto startSlabIdx = std::get<0>(locSlabBinarySearch<SlabSearchType::EXTERNAL>(projectedPoint.x(), data.mySlabs.size(),
+				[&](size_t i) { return std::get<0>(data.mySlabs[i]); }));
+			for (size_t i = startSlabIdx, k = 0; i < data.mySlabs.size() - 1 && k < queryPoints.size(); ++i)
+			{
+				while (k < queryPoints.size() && std::get<0>(queryPoints[k]).x() < std::get<0>(data.mySlabs[i + 1]))
+				{
+					std::get<2>(queryPoints[k++]) = i;
+				}
+			}
+		}
+		else
+		{
+			std::atomic<size_t> counter{ 0 };
+
+			const auto runningThreadsCount = hpx::resource::get_num_threads();
+			const auto chunkSize = static_cast<size_t>(std::ceil(queryPoints.size() / (float)runningThreadsCount));
+
+			// Additional logic on chunk size in order to take the most appropriate decision here
+
+			BindExecutionPolicy<E>(hpx::for_loop_strided, 0, queryPoints.size(), chunkSize,
+				[&](size_t aChunkStartIdx) {
+					const Point2 projectedPoint{ std::get<0>(queryPoints[aChunkStartIdx]).x(), std::get<0>(queryPoints[aChunkStartIdx]).y() };
+					const auto startSlabIdx = std::get<0>(locSlabBinarySearch<SlabSearchType::EXTERNAL>(projectedPoint.x(), data.mySlabs.size(),
+						[&](size_t i) { return std::get<0>(data.mySlabs[i]); }));
+					const auto chunkEnd = std::min<size_t>(aChunkStartIdx + chunkSize, queryPoints.size());
+
+					for (auto i = startSlabIdx, k = aChunkStartIdx; i < data.mySlabs.size() - 1 && k < chunkEnd; ++i)
+					{
+						counter.fetch_add(1, std::memory_order_relaxed);
+						while (k < chunkEnd && std::get<0>(queryPoints[k]).x() < std::get<0>(data.mySlabs[i + 1]))
+						{
+							std::get<2>(queryPoints[k++]) = i;
+						}
+					}
+				});
+
+			result.mySortedPlanesCache.resize(counter.load());
+		}
+
+		BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end(),
+			[](const auto& a, const auto& b) { return std::get<2>(a) < std::get<2>(b); });
+
+		result.myRangeWrappers.resize(queryPoints.size());
+
+		const auto queryPointsProcessing = [&](size_t aPointIdx, size_t claimedIdx)
+		{
+			const size_t rangeStartIdx = aPointIdx;
+			while (++aPointIdx < queryPoints.size() && std::get<2>(queryPoints[aPointIdx]) == std::get<2>(queryPoints[rangeStartIdx]));
+			const size_t rangeEndIdx = aPointIdx;
+
+			const auto& slab = data.mySlabs[std::get<2>(queryPoints[rangeStartIdx])];
+
+			bool hasVerticalLine = locHasVerticalLine(std::get<0>(slab), data.myLines, data.myNonVerticalLinesCount);
+			const auto& sortedLines = locGetSortedLines<ExecutionPolicy::SEQ>(std::get<0>(slab), data.myLines, data.myNonVerticalLinesCount);
+
+			auto& cache = result.mySortedPlanesCache[claimedIdx];
+
+			const auto GetAreaIdx = [&](const size_t aPointIdx)
+			{
+				const Point2 projectedPoint{ std::get<0>(queryPoints[aPointIdx]).x(), std::get<0>(queryPoints[aPointIdx]).y() };
+				const auto verticesCount = std::get<1>(slab).size();
+				auto cacheIdx = -1;
+
+				if (projectedPoint.x() == std::get<0>(slab))
+				{
+					const auto test = locSlabBinarySearch<SlabSearchType::INTERNAL>(projectedPoint.y(), std::get<1>(slab).size(),
+						[&](size_t i) { return std::get<1>(slab)[i]; });
+
+					if (std::get<1>(test))
+					{
+						// Vertex
+						cacheIdx = std::get<0>(test);
+					}
+					else if (hasVerticalLine)
+					{
+						// Vertical segment
+						cacheIdx = cache.size() - (verticesCount + 1) + std::get<0>(test);
+					}
+				}
+				else
+				{
+					const auto lineIdx = locGeometricBinarySearch(projectedPoint, sortedLines.size(), [&](size_t i) { return sortedLines[i]; });
+					if (lineIdx < sortedLines.size() && sortedLines[lineIdx].has_on(projectedPoint))
+					{
+						// Line
+						cacheIdx = verticesCount + lineIdx;
+					}
+					else
+					{
+						// Area
+						cacheIdx = verticesCount + sortedLines.size() + lineIdx;
+					}
+				}
+
+				CGAL_postcondition(cacheIdx > -1);
+				return cacheIdx;
+			};
+
+			std::vector<size_t> areaIndices;
+			locFillRequiredCacheEntries<ExecutionPolicy::SEQ>(somePlanes, queryPoints, rangeStartIdx, rangeEndIdx, GetAreaIdx, areaIndices, cache);
+
+			hpx::for_loop(hpx::execution::seq, rangeStartIdx, rangeEndIdx, [&](size_t aPointIdx) {
+				const auto cacheIdx = areaIndices[aPointIdx - rangeStartIdx];
+				const auto& sortedPlanesIndices = cache.at(cacheIdx);
+				const auto firstUpperPlaneIdx = locGeometricBinarySearch(std::get<0>(queryPoints[aPointIdx]), sortedPlanesIndices.size(),
+					[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
+				using Res = BatchPointResult::RangeWrapper;
+				result.myRangeWrappers[std::get<1>(queryPoints[aPointIdx])] =
+					Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, claimedIdx, cacheIdx };
+				});
+			return rangeEndIdx;
+		};
+
+		if constexpr (E == ExecutionPolicy::SEQ)
+		{
+			size_t i = 0;
+			while (i < queryPoints.size())
+			{
+				const auto claimedIdx = result.mySortedPlanesCache.size();
+				result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
+				i = queryPointsProcessing(i, claimedIdx);
+			}
+		}
+		else
+		{
+			std::atomic<size_t> counter{ 0 };
+
+			BindExecutionPolicy<E>(hpx::for_loop, 0, queryPoints.size(),
+				[&](size_t aPointIdx) {
+					if (aPointIdx == 0 ||
+						std::get<2>(queryPoints[aPointIdx]) != std::get<2>(queryPoints[aPointIdx - 1]))
+					{
+						queryPointsProcessing(aPointIdx, counter.fetch_add(1, std::memory_order_relaxed));
+					}
+				});
+
+			result.mySortedPlanesCache.resize(counter.load());
+		}
+
+		return result;
 	}
 
-	BatchPointResult ParallelBatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
-	{
-		constexpr auto policy = ExecutionPolicy::PAR_UNSEQ;
-		return locBatchPointLocation<policy>(somePlanes, somePoints);
-	}
-
-	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
-	{
-		constexpr auto policy = ExecutionPolicy::SEQ;
-		return locBatchPointLocation<policy>(somePlanes, somePoints);
-	}
+	// ------------------------------------------------
+	// Explicit instantiation for each execution policy
+	template BatchPointResult BatchPointLocation<ExecutionPolicy::SEQ>(const std::vector<Plane>&, const std::vector<Point3>&);
+	template BatchPointResult BatchPointLocation<ExecutionPolicy::PAR>(const std::vector<Plane>&, const std::vector<Point3>&);
+	template BatchPointResult BatchPointLocation<ExecutionPolicy::PAR_UNSEQ>(const std::vector<Plane>&, const std::vector<Point3>&);
 }
