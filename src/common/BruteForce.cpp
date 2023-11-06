@@ -562,15 +562,15 @@ namespace SPGMT
 			auto boundaryStartIt = edges.begin();
 			std::vector<Edge<Point3>> temporaryEdges;
 
-			for (size_t i = 1, lastStart = 0, edgesOldSize = edges.size(); i < edgesOldSize; ++i)
+			for (size_t i = 1, lastStart = 0, edgesOldSize = edges.size(); i <= edgesOldSize; ++i)
 			{
-				if (edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane ||
-					i == edgesOldSize - 1)
+				if (i == edgesOldSize ||
+					edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane)
 				{
 					for (size_t k = lastStart + 1; k < i; ++k)
 					{
-						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[i].myEnd, EdgeType::SEGMENT_TRIANGLE });
-						edges.emplace_back(Edge<Point3>{ edges[i].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
+						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[k].myEnd, EdgeType::SEGMENT_TRIANGLE });
+						edges.emplace_back(Edge<Point3>{ edges[k].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
 					}
 					lastStart = i;
 				}
@@ -578,25 +578,23 @@ namespace SPGMT
 		}
 		else
 		{
-			// Dummy upper bound
 			std::vector<size_t> ranges(edges.size() / 2);
-			std::atomic<size_t> atomicCounter{ 1 };
-			ranges.front() = 0;
-			BindExecutionPolicy<E>(hpx::for_loop, 1, edges.size(), [&](size_t anEdgeIdx) {
-				if (edges[anEdgeIdx].myLowestLeftPlane != edges[anEdgeIdx - 1].myLowestLeftPlane)
+			ranges.emplace_back(0);
+			
+			// Sequential is faster
+			for (size_t i = 1; i < edges.size(); ++i)
+			{
+				if (edges[i].myLowestLeftPlane != edges[i - 1].myLowestLeftPlane)
 				{
-					ranges[atomicCounter.fetch_add(1, std::memory_order_relaxed)] = anEdgeIdx;
+					ranges.emplace_back(i);
 				}
-				});
-
-			ranges.resize(atomicCounter.fetch_xor(atomicCounter.load()) + 1);
-			ranges.back() = edges.size();
+			}
+			ranges.emplace_back(edges.size());
 
 			const auto prevEdgesCount = edges.size();
-			atomicCounter.store(prevEdgesCount);
-
 			// Dummy upper-bound
-			edges.resize(prevEdgesCount * 3);
+			edges.resize(prevEdgesCount * 4);
+			std::atomic<size_t> atomicCounter{ prevEdgesCount };
 
 			BindExecutionPolicy<E>(hpx::for_loop, 0, ranges.size() - 1, [&](size_t aRangeIdx) {
 				BindExecutionPolicy<E>(hpx::for_loop, ranges[aRangeIdx] + 1, ranges[aRangeIdx + 1], [&](size_t anEdgeIdx) {
@@ -605,7 +603,7 @@ namespace SPGMT
 
 					edges[storeIdx].myType = EdgeType::SEGMENT_TRIANGLE;
 					edges[storeIdx].myStart = startEdge.myStart;
-					edges[storeIdx].myEnd = edges[anEdgeIdx].myEnd;
+					edges[storeIdx].myEnd = startEdge.myEnd;
 
 					edges[storeIdx + 1].myType = EdgeType::SEGMENT_TRIANGLE;
 					edges[storeIdx + 1].myStart = edges[anEdgeIdx].myEnd;
@@ -613,7 +611,7 @@ namespace SPGMT
 					});
 				});
 
-			edges.resize(atomicCounter.fetch_xor(atomicCounter.load()) - prevEdgesCount);
+			edges.resize(atomicCounter.load() - prevEdgesCount);
 		}
 
 		locSortEdgesCCW<E>(edges);
@@ -651,6 +649,43 @@ namespace SPGMT
 		}
 	}
 
+	template<ExecutionPolicy E>
+	std::vector<size_t> GetLowerEnvelopePlanesIndices(const LowerEnvelope3d& aLowerEnvelope)
+	{
+		if (std::holds_alternative<std::monostate>(aLowerEnvelope))
+		{
+			return std::vector<size_t>{};
+		}
+		else if (std::holds_alternative<size_t>(aLowerEnvelope))
+		{
+			std::vector<size_t> indices;
+			indices.emplace_back(std::get<size_t>(aLowerEnvelope));
+			return indices;
+		}
+		else
+		{
+			CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope));
+			const auto& edges = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
+			std::vector<size_t> indices(edges.size());
+			std::atomic<size_t> counter{ 0 };
+			BindExecutionPolicy<E>(hpx::for_loop, 0, edges.size(), [&](size_t i) {
+				if (edges[i].myType == EdgeType::LINE ||
+					edges[i].myType == EdgeType::HALF_EDGE_SF ||
+					edges[i].myType == EdgeType::HALF_EDGE_EF ||
+					edges[i].myType == EdgeType::SEGMENT)
+				{
+					CGAL_precondition(edges[i].myLowestLeftPlane > -1);
+					indices[counter.fetch_add(1, std::memory_order_relaxed)] = edges[i].myLowestLeftPlane;
+				}
+				});
+			indices.resize(counter.load());
+			BindExecutionPolicy<E>(hpx::sort, indices.begin(), indices.end());
+			indices.erase(BindExecutionPolicy<E>(hpx::unique, indices.begin(), indices.end()), indices.end());
+			return indices;
+		}
+	}
+
+
 	// ------------------------------------------------
 	// Explicit instantiation for each execution policy
 	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::SEQ>(const std::vector<Plane>& somePlanes);
@@ -666,4 +701,9 @@ namespace SPGMT
 	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::SEQ>(const LowerEnvelope3d& aLowerEnvelope);
 	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR>(const LowerEnvelope3d& aLowerEnvelope);
 	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(const LowerEnvelope3d& aLowerEnvelope);
+
+	// Explicit instantiation for each execution policy
+	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::SEQ>(const LowerEnvelope3d& aLowerEnvelope);
+	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::PAR>(const LowerEnvelope3d& aLowerEnvelope);
+	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::PAR_UNSEQ>(const LowerEnvelope3d& aLowerEnvelope);
 }

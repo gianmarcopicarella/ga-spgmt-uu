@@ -37,7 +37,7 @@ namespace SPGMT
 			};
 		}
 
-		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope)
+		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope, bool aShouldShowTrianglesFlag)
 		{
 			constexpr auto width = 1280.f;
 			constexpr auto height = 720.f;
@@ -112,6 +112,26 @@ namespace SPGMT
 							}
 						}
 
+						if (aShouldShowTrianglesFlag)
+						{
+							for (const auto& edge : lowerEnvelope)
+							{
+								if (edge.myType == EdgeType::SEGMENT_TRIANGLE)
+								{
+									Edge<Point3> newEdge;
+									newEdge.myType = edge.myType;
+									newEdge.myLowestLeftPlane = edge.myLowestLeftPlane;
+									newEdge.myStart = edge.myStart;
+									newEdge.myEnd = edge.myEnd;
+									if (newEdge.myStart > newEdge.myEnd)
+									{
+										std::swap(newEdge.myStart, newEdge.myEnd);
+									}
+									uniqueEdges.emplace_back(newEdge);
+								}
+							}
+						}
+
 						std::sort(uniquePoints.begin(), uniquePoints.end());
 						std::sort(uniqueEdges.begin(), uniqueEdges.end(), sortEdges);
 						uniquePoints.erase(std::unique(uniquePoints.begin(), uniquePoints.end()), uniquePoints.end());
@@ -126,23 +146,47 @@ namespace SPGMT
 						positions.emplace_back(vertexPosition);
 					}
 
+					std::map<Point3, sf::Vector2f, CGAL::Less<Point3, Point3>> infinityMap;
+
 					for (const auto& edge : uniqueEdges)
 					{
-						const auto& startPosition = mapping.MapPointToScreen(Point2{ edge.myStart.x(), edge.myStart.y() });
-						edges.emplace_back(sf::Vertex{ startPosition });
+						if (edge.myType < EdgeType::SEGMENT_TRIANGLE)
+						{
+							const auto& startPosition = mapping.MapPointToScreen(Point2{ edge.myStart.x(), edge.myStart.y() });
+							edges.emplace_back(sf::Vertex{ startPosition });
 
-						if (edge.myType == EdgeType::SEGMENT)
-						{
-							const auto& endPosition = mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
-							edges.emplace_back(sf::Vertex{ endPosition });
+							if (edge.myType == EdgeType::SEGMENT)
+							{
+								const auto& position = mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
+								edges.emplace_back(sf::Vertex{ position });
+							}
+							else
+							{
+								const auto& infiniteVertexPosition =
+									mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
+								constexpr auto distance = 10000.f;
+								const auto position = sf::Vector2f{ infiniteVertexPosition - startPosition }.normalized() * distance +
+									startPosition;
+								edges.emplace_back(sf::Vertex{ position });
+							}
+
+							if (aShouldShowTrianglesFlag)
+							{
+								infinityMap.insert(std::make_pair(edge.myEnd, edges[edges.size() - 1].position));
+								infinityMap.insert(std::make_pair(edge.myStart, edges[edges.size() - 2].position));
+							}
 						}
-						else
+					}
+
+					if (aShouldShowTrianglesFlag)
+					{
+						for (const auto& edge : uniqueEdges)
 						{
-							const auto& infiniteVertexPosition =
-								mapping.MapPointToScreen(Point2{ edge.myEnd.x(), edge.myEnd.y() });
-							constexpr auto distance = 10000.f;
-							edges.emplace_back(sf::Vertex{ sf::Vector2f{ infiniteVertexPosition - startPosition }.normalized() * distance +
-								startPosition });
+							if (edge.myType == EdgeType::SEGMENT_TRIANGLE)
+							{
+								edges.emplace_back(sf::Vertex{ infinityMap.at(edge.myStart), sf::Color::Red });
+								edges.emplace_back(sf::Vertex{ infinityMap.at(edge.myEnd), sf::Color::Red });
+							}
 						}
 					}
 				}

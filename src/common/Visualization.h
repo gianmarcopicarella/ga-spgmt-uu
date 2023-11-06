@@ -4,8 +4,8 @@
 
 namespace SPGMT
 {
-	namespace Visualization 
+	namespace Visualization
 	{
-		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
+		void VisualizeLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope, bool aShouldShowTrianglesFlag = false);
 	}
 }

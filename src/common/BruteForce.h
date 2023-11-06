@@ -12,4 +12,7 @@ namespace SPGMT
 
 	template<ExecutionPolicy E>
 	size_t CountVerticesInLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
+
+	template<ExecutionPolicy E>
+	std::vector<size_t> GetLowerEnvelopePlanesIndices(const LowerEnvelope3d& aLowerEnvelope);
 }

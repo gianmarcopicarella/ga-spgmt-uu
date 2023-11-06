@@ -14,6 +14,7 @@
 #include <CGAL/Vector_2.h>
 #include <CGAL/Segment_3.h>
 #include <CGAL/Ray_2.h>
+#include <CGAL/Ray_3.h>
 #include <CGAL/Sphere_3.h>
 //#include <CGAL/Iso_rectangle_2.h>
 #include <CGAL/Iso_cuboid_3.h>
@@ -56,6 +57,7 @@ namespace SPGMT
     typedef Kernel::Direction_2 Dir2;
     typedef CGAL::Segment_3<Kernel> Segment3;
     typedef Kernel::Ray_2 Ray2;
+    typedef Kernel::Ray_3 Ray3;
     typedef Kernel::Sphere_3 Sphere3;
     //typedef Kernel::Iso_rectangle_2 Rec2;
     typedef Kernel::Iso_cuboid_3 Cube;
@@ -63,11 +65,12 @@ namespace SPGMT
 
     enum class EdgeType
     {
-        LINE,
-        HALF_EDGE_EF,
-        HALF_EDGE_SF,
-        SEGMENT,
-        SEGMENT_TRIANGLE
+        LINE = 1,
+        HALF_EDGE_EF = 2,
+        SEGMENT = 4,
+        HALF_EDGE_SF = 8,
+        // Triangulation types
+        SEGMENT_TRIANGLE = 16,
     };
 
     template<typename T>
