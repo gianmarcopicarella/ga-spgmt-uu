@@ -92,6 +92,7 @@ namespace SPGMT
 			return result;
 		}
 
+		void FlipPlaneNormalsIfFacingDownwards(std::vector<Plane>& someOutPlanes);
 		bool IsPlaneFacingUp(const Plane& aPlane);
 
 		template<typename T>

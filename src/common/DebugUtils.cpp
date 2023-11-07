@@ -1,4 +1,5 @@
 #include "DebugUtils.h"
+#include "Utils.h"
 
 #include <CGAL/point_generators_3.h>
 #include <CGAL/number_utils.h>
@@ -6,13 +7,14 @@
 #include <algorithm>
 #include <random>
 
+
 namespace SPGMT
 {
 	/*const unsigned long int SEED = 23322392398;
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/ };
+		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/2968548432 };
 		return rand;
 	}
 
@@ -110,6 +112,42 @@ namespace SPGMT
 
 	namespace Debug
 	{
+		void PrintLowerEnvelope(const SPGMT::LowerEnvelope3d& aLowerEnvelope)
+		{
+			std::cout << "LOWER ENVELOPE:" << std::endl;
+			if (std::holds_alternative<size_t>(aLowerEnvelope))
+			{
+				std::cout << "Plane: " << std::get<size_t>(aLowerEnvelope) << std::endl;
+			}
+			else if (std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope))
+			{
+				const auto& edges = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
+				for (const auto& edge : edges)
+				{
+					std::cout << "START: (" << edge.myStart << ") - END: (" << edge.myEnd << ") - ";
+					switch (edge.myType)
+					{
+					case EdgeType::LINE: 
+						std::cout << "L" << std::endl;
+						break;
+					case EdgeType::SEGMENT: 
+						std::cout << "S" << std::endl;
+						break;
+					case EdgeType::HALF_EDGE_EF: 
+						std::cout << "EF" << std::endl;
+						break;
+					case EdgeType::HALF_EDGE_SF: 
+						std::cout << "SF" << std::endl;
+						break;
+					case EdgeType::SEGMENT_TRIANGLE:
+						std::cout << "_ST" << std::endl;
+						break;
+					}
+				}
+			}
+			std::cout << "---------------" << std::endl;
+		}
+
 		bool IsLowerEnvelopeCorrect(const SPGMT::LowerEnvelope3d& aLowerEnvelope, const std::vector<SPGMT::Plane>& somePlanes)
 		{
 			auto isValid{ false };
@@ -175,22 +213,22 @@ namespace SPGMT
 					// Counts only finite vertices
 					size_t uniqueVerticesCount = 0;
 					{
-						std::vector<Edge<Point3>> segments;
-						std::copy_if(edges.begin(), edges.end(), std::back_inserter(segments),
-							[](const auto& anEdge) { return anEdge.myType == EdgeType::SEGMENT || anEdge.myType == EdgeType::HALF_EDGE_SF; });
 						std::vector<Point2> vertices;
-						for (const auto& s : segments)
+						for (const auto& edge : edges)
 						{
-							vertices.emplace_back(locProjectXY(s.myStart));
-							if (s.myType == EdgeType::SEGMENT)
+							if (edge.myType == EdgeType::SEGMENT ||
+								edge.myType == EdgeType::HALF_EDGE_SF)
 							{
-								vertices.emplace_back(locProjectXY(s.myEnd));
+								vertices.emplace_back(locProjectXY(edge.myStart));
+								if (edge.myType == EdgeType::SEGMENT)
+								{
+									vertices.emplace_back(locProjectXY(edge.myEnd));
+								}
 							}
 						}
 						std::sort(vertices.begin(), vertices.end());
 						uniqueVerticesCount = std::unique(vertices.begin(), vertices.end()) - vertices.begin();
 					}
-
 					CGAL_precondition(uniqueVerticesCount == expectedLE.number_of_vertices());
 
 					for (VertexIter it = expectedLE.vertices_begin();
@@ -221,6 +259,7 @@ namespace SPGMT
 								neighbourIter =
 									std::find_if(neighboursStartIter, neighboursEndIter,
 										std::bind(isAlongRay, halfEdgeCurve.ray(), std::placeholders::_1));
+								
 								CGAL_precondition(neighbourIter != neighboursEndIter);
 							}
 							else
@@ -458,6 +497,7 @@ namespace SPGMT
 				}
 			}
 
+			Utils::FlipPlaneNormalsIfFacingDownwards(samples);
 			return samples;
 		}
 	}

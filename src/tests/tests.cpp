@@ -476,14 +476,20 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 	{
 		using namespace SPGMT;
 		constexpr auto planesCount = 25;
-		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
+
+		auto planes = Debug::RandomPlaneSamplingTest(planesCount);
+
+		//const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
 		auto result = SPGMT::ComputeLowerEnvelope<ExecutionPolicy::SEQ>(planes);
+
+		Debug::PrintLowerEnvelope(result);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
 
 		TriangulateLowerEnvelope<ExecutionPolicy::SEQ>(result);
 
-		SPGMT::Visualization::VisualizeLowerEnvelope(result);
+		constexpr auto showTriangleEdges = true;
+		SPGMT::Visualization::VisualizeLowerEnvelope(result, showTriangleEdges);
 	}
 }
 
@@ -508,19 +514,13 @@ TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[Duality
 
 		// Apply duality transform
 		const auto& dualizedPlanes = Utils::DualMapping(startingPlanes);
-		const auto& dualizedPoints = Utils::DualMapping(startingPoints);
+		auto dualizedPoints = Utils::DualMapping(startingPoints);
+		Utils::FlipPlaneNormalsIfFacingDownwards(dualizedPoints);
 
 		// Check reverse order property
 		for (int i = 0; i < itemsCount; ++i)
 		{
-			if (Utils::IsPlaneFacingUp(dualizedPoints[i]))
-			{
-				REQUIRE(!dualizedPoints[i].has_on_positive_side(dualizedPlanes[i]));
-			}
-			else
-			{
-				REQUIRE(!dualizedPoints[i].has_on_negative_side(dualizedPlanes[i]));
-			}
+			REQUIRE(!dualizedPoints[i].has_on_positive_side(dualizedPlanes[i]));
 		}
 	}
 }
@@ -530,8 +530,11 @@ TEST_CASE("ComputeSmartLowerEnvelope with some random planes", "[ComputeSmartLow
 	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
-		constexpr auto planesCount = 20;
-		const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+		constexpr auto planesCount = 25;
+
+		const auto& planes = Debug::RandomPlaneSamplingTest(planesCount);
+		REQUIRE(Utils::AreItemsUnique(planes));
+
 		auto result = SPGMT::ComputeLowerEnvelopeSmart(planes);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
@@ -551,7 +554,7 @@ int RunTests(int argc, char* argv[])
 	std::vector<std::string> testOrTag;
 
 	//testOrTag.push_back("[ComputeLowerEnvelope]");
-	testOrTag.push_back("[BatchPointLocation]");//[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
+	testOrTag.push_back("[ComputeSmartLowerEnvelope]");//[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
 
 	settings.testsOrTags = testOrTag;
 

@@ -22,6 +22,7 @@ namespace SPGMT
 			std::vector<Point3> mySamples;
 			int myPositiveCount{ 0 }, myNegativeCount{ 0 }, myOverSurfaceCount{ 0 };
 		};
+		void PrintLowerEnvelope(const SPGMT::LowerEnvelope3d& aLowerEnvelope);
 		bool IsLowerEnvelopeCorrect(const SPGMT::LowerEnvelope3d& aLowerEnvelope, const std::vector<SPGMT::Plane>& somePlanes);
 		//LowerEnvelope2d GetLowerEnvelopeOfPlanes(const std::vector<Plane>& somePlanes);
 

@@ -103,5 +103,16 @@ namespace SPGMT
 			static const Vec3 up{ 0,0,1 };
 			return CGAL::sign(CGAL::scalar_product(up, aPlane.orthogonal_vector())) != CGAL::Sign::NEGATIVE;
 		}
+
+		void FlipPlaneNormalsIfFacingDownwards(std::vector<Plane>& someOutPlanes)
+		{
+			for (auto i = 0; i < someOutPlanes.size(); ++i)
+			{
+				if (!IsPlaneFacingUp(someOutPlanes[i]))
+				{
+					someOutPlanes[i] = Plane{ someOutPlanes[i].point(), -someOutPlanes[i].orthogonal_direction() };
+				}
+			}
+		}
 	}
 }

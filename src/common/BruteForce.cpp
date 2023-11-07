@@ -1,5 +1,7 @@
 #include "BruteForce.h"
 #include "Utils.h"
+#include "DebugUtils.h"
+
 #include <CGAL/Polygon_2_algorithms.h>
 
 #include <atomic>
@@ -552,66 +554,79 @@ namespace SPGMT
 		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
 		auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);
 		CGAL_precondition(edges.size() > 2);
+
 		BindExecutionPolicy<E>(hpx::sort, edges.begin(), edges.end(), [](const auto& aFirstEdge, const auto& aSecondEdge)
 			{
 				return aFirstEdge.myLowestLeftPlane < aSecondEdge.myLowestLeftPlane ||
 					(aFirstEdge.myLowestLeftPlane == aSecondEdge.myLowestLeftPlane && aFirstEdge.myType < aSecondEdge.myType);
 			});
+
 		if constexpr (E == ExecutionPolicy::SEQ)
 		{
-			auto boundaryStartIt = edges.begin();
-			std::vector<Edge<Point3>> temporaryEdges;
-
-			for (size_t i = 1, lastStart = 0, edgesOldSize = edges.size(); i <= edgesOldSize; ++i)
+			for (int i = 1, lastStart = 0, prevStartIdx = -1, edgesOldSize = edges.size(); i <= edgesOldSize; ++i)
 			{
 				if (i == edgesOldSize ||
 					edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane)
 				{
-					for (size_t k = lastStart + 1; k < i; ++k)
+					for (auto k = lastStart + 1; k < i; ++k)
 					{
+						if (prevStartIdx > -1 && (k == prevStartIdx || edges[k].myEnd == edges[prevStartIdx].myStart))
+						{
+							continue;
+						}
 						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[k].myEnd, EdgeType::SEGMENT_TRIANGLE });
 						edges.emplace_back(Edge<Point3>{ edges[k].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
 					}
+
 					lastStart = i;
+					prevStartIdx = -1;
+				}
+				else if (edges[i].myEnd == edges[lastStart].myStart)
+				{
+					CGAL_precondition(prevStartIdx == -1);
+					prevStartIdx = i;
 				}
 			}
 		}
 		else
 		{
-			std::vector<size_t> ranges(edges.size() / 2);
-			ranges.emplace_back(0);
-			
-			// Sequential is faster
-			for (size_t i = 1; i < edges.size(); ++i)
-			{
-				if (edges[i].myLowestLeftPlane != edges[i - 1].myLowestLeftPlane)
-				{
-					ranges.emplace_back(i);
-				}
-			}
-			ranges.emplace_back(edges.size());
-
-			const auto prevEdgesCount = edges.size();
+			const auto edgesOldSize = edges.size();
 			// Dummy upper-bound
-			edges.resize(prevEdgesCount * 4);
-			std::atomic<size_t> atomicCounter{ prevEdgesCount };
+			edges.resize(edgesOldSize * 4);
+			std::atomic<size_t> atomicCounter{ edgesOldSize };
 
-			BindExecutionPolicy<E>(hpx::for_loop, 0, ranges.size() - 1, [&](size_t aRangeIdx) {
-				BindExecutionPolicy<E>(hpx::for_loop, ranges[aRangeIdx] + 1, ranges[aRangeIdx + 1], [&](size_t anEdgeIdx) {
-					const auto& startEdge = edges[ranges[aRangeIdx]];
-					const auto storeIdx = atomicCounter.fetch_add(2, std::memory_order_relaxed);
+			BindExecutionPolicy<E>(hpx::for_loop, 0, edgesOldSize, [&](size_t i) {
+				if (i == 0 ||
+					edges[i].myLowestLeftPlane != edges[i - 1].myLowestLeftPlane)
+				{
+					const auto startIdx = i;
+					auto prevStartIdx = -1;
+					while (++i < edgesOldSize &&
+						edges[i].myLowestLeftPlane == edges[startIdx].myLowestLeftPlane)
+					{
+						if (edges[i].myEnd == edges[startIdx].myStart)
+						{
+							CGAL_precondition(prevStartIdx == -1);
+							prevStartIdx = i;
+						}
+					}
 
-					edges[storeIdx].myType = EdgeType::SEGMENT_TRIANGLE;
-					edges[storeIdx].myStart = startEdge.myStart;
-					edges[storeIdx].myEnd = startEdge.myEnd;
+					const auto newEdgesCount = i - startIdx - 1 - 2 * static_cast<int>(prevStartIdx > -1);
+					auto outIdx = atomicCounter.fetch_add(newEdgesCount, std::memory_order_relaxed);
+					i = startIdx;
 
-					edges[storeIdx + 1].myType = EdgeType::SEGMENT_TRIANGLE;
-					edges[storeIdx + 1].myStart = edges[anEdgeIdx].myEnd;
-					edges[storeIdx + 1].myEnd = startEdge.myStart;
-					});
+					while (++i < edgesOldSize && edges[i].myLowestLeftPlane == edges[startIdx].myLowestLeftPlane)
+					{
+						if (prevStartIdx > -1 && (i == prevStartIdx || edges[i].myEnd == edges[prevStartIdx].myStart))
+						{
+							continue;
+						}
+						edges[outIdx++] = Edge<Point3>{ edges[startIdx].myStart, edges[i].myEnd, EdgeType::SEGMENT_TRIANGLE };
+						edges[outIdx++] = Edge<Point3>{ edges[i].myEnd, edges[startIdx].myStart, EdgeType::SEGMENT_TRIANGLE };
+					}
+				}
 				});
-
-			edges.resize(atomicCounter.load() - prevEdgesCount);
+			edges.resize(atomicCounter.load());
 		}
 
 		locSortEdgesCCW<E>(edges);
