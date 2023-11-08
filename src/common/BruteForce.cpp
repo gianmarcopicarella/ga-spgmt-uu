@@ -574,6 +574,9 @@ namespace SPGMT
 						{
 							continue;
 						}
+
+						CGAL_precondition(edges[lastStart].myStart != edges[k].myEnd);
+
 						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[k].myEnd, EdgeType::SEGMENT_TRIANGLE });
 						edges.emplace_back(Edge<Point3>{ edges[k].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
 					}

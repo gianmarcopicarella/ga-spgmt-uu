@@ -15,6 +15,7 @@
 //}
 
 #include "../common/Types.h"
+#include "../common/DebugUtils.h"
 
 #include <CGAL/boost/graph/Dual.h>
 #include <CGAL/boost/graph/helpers.h>
@@ -35,19 +36,26 @@ int hpx_func()
 	using std::chrono::duration_cast;
 	using std::chrono::duration;
 	using std::chrono::milliseconds;
+	
+	std::cout << hpx::resource::get_num_threads() << std::endl;
 
-	std::vector<int> values(1000000000);
-	std::iota(values.begin(), values.end(), 0);
+	std::vector<Point3> v = SPGMT::Debug::Uniform3DCubeSampling(300.f, 10000);
+	
+	std::atomic<size_t> t{ 0 };
+
+	hpx::for_loop_strided(hpx::execution::seq, 0, v.size(), 100, [](size_t val) {  hpx::util::format_to(std::cout, "{1}\n", val);  });
+
+	/*hpx::execution::experimental::static_chunk_size scs;
+	hpx::for_loop(
+		hpx::execution::par.with(scs),
+		0, v.size(),
+		[](size_t val) { std::cout << val << std::endl;  });*/
 
 	auto t1 = high_resolution_clock::now();
 
-	hpx::parallel::sort(
+	hpx::for_loop(
 		hpx::execution::par,
-		values.begin(), values.end(),
-		[](int a, int b)
-		{
-			return a > b;
-		}
+		0, v.size(), [&](size_t idx) { v[idx] = Point3{ CGAL::Random().get_double(),CGAL::Random().get_double() ,CGAL::Random().get_double() }; }
 	);
 
 	auto t2 = high_resolution_clock::now();

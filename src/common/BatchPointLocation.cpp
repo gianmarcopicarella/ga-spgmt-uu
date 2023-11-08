@@ -569,7 +569,7 @@ namespace SPGMT
 		}
 
 		// Requirements check (TEMPORARY DISABLED)
-		// CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		// CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 		// CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
 

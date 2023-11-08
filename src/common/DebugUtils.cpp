@@ -493,11 +493,12 @@ namespace SPGMT
 
 				if (isPlaneUnique)
 				{
+					CGAL_precondition(!Utils::IsPlaneFacingUp(plane));
 					samples.push_back(plane);
 				}
 			}
 
-			Utils::FlipPlaneNormalsIfFacingDownwards(samples);
+			//Utils::FlipPlaneNormalsIfFacingDownwards(samples);
 			return samples;
 		}
 	}

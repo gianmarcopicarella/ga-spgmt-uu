@@ -478,11 +478,11 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 		constexpr auto planesCount = 25;
 
 		auto planes = Debug::RandomPlaneSamplingTest(planesCount);
-
+		Utils::FlipPlaneNormalsIfFacingDownwards(planes);
 		//const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
 		auto result = SPGMT::ComputeLowerEnvelope<ExecutionPolicy::SEQ>(planes);
 
-		Debug::PrintLowerEnvelope(result);
+		//Debug::PrintLowerEnvelope(result);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
 
@@ -515,12 +515,12 @@ TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[Duality
 		// Apply duality transform
 		const auto& dualizedPlanes = Utils::DualMapping(startingPlanes);
 		auto dualizedPoints = Utils::DualMapping(startingPoints);
-		Utils::FlipPlaneNormalsIfFacingDownwards(dualizedPoints);
 
 		// Check reverse order property
 		for (int i = 0; i < itemsCount; ++i)
 		{
-			REQUIRE(!dualizedPoints[i].has_on_positive_side(dualizedPlanes[i]));
+			// Reversed check because each plane normal is pointing downwards (-z)
+			REQUIRE(!dualizedPoints[i].has_on_negative_side(dualizedPlanes[i]));
 		}
 	}
 }
