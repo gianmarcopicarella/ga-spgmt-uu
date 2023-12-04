@@ -21,7 +21,7 @@
 
 #include <CGAL/Triangle_3.h>
 
-#include <hpx/hpx.hpp>
+//#include <hpx/hpx.hpp>
 
 // Only for debug
 //#include <CGAL/Simple_cartesian.h>
@@ -90,7 +90,7 @@ namespace SPGMT
         PAR_UNSEQ
     };
 
-    template <ExecutionPolicy E, typename Func, class ... Args>
+    /*template <ExecutionPolicy E, typename Func, class ... Args>
     decltype(auto) BindExecutionPolicy(Func&& aFunction, Args&&...someArgs)
     {
         switch (E)
@@ -102,12 +102,5 @@ namespace SPGMT
         default:
             return std::forward<Func>(aFunction)(hpx::execution::seq, std::forward<Args>(someArgs)...);
         }
-    }
-
-    enum class STATUS
-    {
-        NONE = 0,
-        INIT = -1,
-    };
-
+    }*/
 }

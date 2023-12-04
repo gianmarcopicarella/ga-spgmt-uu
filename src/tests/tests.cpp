@@ -10,26 +10,42 @@
 #include "../common/Visualization.h"
 #include "../common/Utils.h"
 
-// Including it here otherwise the compiler moans
-#include <hpx/hpx_init.hpp>
+#include <iostream>
+#include <chrono>
 
-/**/
-TEST_CASE("BatchPointLocation with no planes returns an empty list of ranges", "[BatchPointLocation]")
+// mem test
+#include <CGAL/Compact_container.h>
+
+// thread test
+#include <oneapi/tbb/info.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
+#include <oneapi/tbb/global_control.h>
+
+//#include <oneapi/tbb/tbbmalloc_proxy.h> // It improves deallocation
+
+
+#define THREADS_COUNT 14
+
+TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 {
+	//std::cout << tbb::TBB_malloc_replacement_log(nullptr) << std::endl;
+
+	// Limit the number of threads to two for all oneTBB parallel interfaces
+	oneapi::tbb::global_control global_limit(oneapi::tbb::global_control::max_allowed_parallelism, THREADS_COUNT);
+
+	/*
 	SECTION("100 Random Points")
 	{
 		constexpr auto sampleCount = 100;
 		std::vector<SPGMT::Plane> planes;
 		std::vector<SPGMT::Point3> points = SPGMT::Debug::Uniform3DCubeSampling(100.f, sampleCount);
 
-		const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::PAR_UNSEQ>(planes, points);
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
 		REQUIRE((result.myRangeWrappers.empty() && result.mySortedPlanesCache.empty()));
 	}
-}
 
-TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if point is above plane, else <-1, -1>", "[BatchPointLocation]")
-{
 	// Parallel Random planes
 	SECTION("Multiple Parallel Planes and Random Points around them")
 	{
@@ -48,10 +64,10 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 		}
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::PAR_UNSEQ>(planes, points);
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
 		REQUIRE(result.myRangeWrappers.size() == (planeSamplesCount * pointSamplesCount));
-		REQUIRE((result.mySortedPlanesCache.size() == 1 && result.mySortedPlanesCache[0].at(0).size() == planeSamplesCount));
+		REQUIRE((result.mySortedPlanesCache.size() == 1 && result.mySortedPlanesCache.at(0).at(0).size() == planeSamplesCount));
 
 		// Check ranges
 		for (auto i = 0; i < result.myRangeWrappers.size(); ++i)
@@ -65,14 +81,14 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 				// Check that all planes before are below the point and all planes in the range are above the point
 				for (int k = 0; k < firstPlaneAboveIdx; ++k)
 				{
-					const int planeIdx = result.mySortedPlanesCache[0].at(0)[k];
+					const int planeIdx = result.mySortedPlanesCache.at(0).at(0)[k];
 					const auto requirement = planes[planeIdx].has_on_positive_side(points[i]);
 					REQUIRE(requirement);
 				}
 
 				for (int k = firstPlaneAboveIdx; k < rangeEnd; ++k)
 				{
-					const int planeIdx = result.mySortedPlanesCache[0].at(0)[k];
+					const int planeIdx = result.mySortedPlanesCache.at(0).at(0)[k];
 					const auto requirement = !planes[planeIdx].has_on_positive_side(points[i]);
 					REQUIRE(requirement);
 				}
@@ -101,7 +117,7 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 			const auto& points = SPGMT::Debug::RandomPointsPartitionedByPlane(pointSamplesCount, plane);
 
 			// run function
-			const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::PAR_UNSEQ>({ plane }, points.mySamples);
+			const auto result = SPGMT::BatchPointLocation({ plane }, points.mySamples);
 			REQUIRE(result.myRangeWrappers.size() == pointSamplesCount);
 			REQUIRE((result.mySortedPlanesCache.size() == 1 && result.mySortedPlanesCache.at(0).size() == planeSamplesCount));
 
@@ -116,16 +132,13 @@ TEST_CASE("BatchPointLocation with one plane returns a list with pair <0, -1> if
 			}
 		}
 	}
-}
 
-TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting plane intersections", "[BatchPointLocation]")
-{
 	SECTION("One horizontal plane and some random parallel planes intersecting it")
 	{
 		constexpr auto minPlaneDistance = 20.f;
 		constexpr auto planesCount = 30;
-		constexpr auto pointSamplesCount = 0;
-		constexpr auto specialPointSamplesCount = 10000;
+		constexpr auto pointSamplesCount = 10;
+		constexpr auto specialPointSamplesCount = 10;
 		constexpr auto allowSamplesOverPlane = true;
 
 		auto planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount, minPlaneDistance);
@@ -147,7 +160,7 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
 		}
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::PAR_UNSEQ>(planes, points);
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
 		REQUIRE(result.myRangeWrappers.size() == points.size());
 
@@ -189,10 +202,8 @@ TEST_CASE("BatchPointLocation with multiple parallel 2D lines when projecting pl
 			}
 		}
 	}
-}
 
-TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
-{
+	
 	SECTION("One horizontal plane and some random parallel planes intersecting it")
 	{
 		constexpr auto minPlaneDistance = 20.f;
@@ -220,7 +231,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 		}
 
 		// run function
-		const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::SEQ>(planes, points);
+		const auto result = SPGMT::BatchPointLocation(planes, points);
 
 		// NEW CHECK
 		using namespace SPGMT;
@@ -265,34 +276,51 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 			}
 		}
 	}
-
+	*/
 
 	SECTION("random planes")
 	{
 		constexpr auto minPlaneDistance = 20.f;
-		constexpr auto planesCount = 15;
+		constexpr auto planesCount = 100;
 		constexpr auto pointSamplesCount = 100;
 		constexpr auto allowSamplesOverPlane = true;
 
-		auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount);
+		auto planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -400, 400);
 
 		std::vector<SPGMT::Point3> points;
 
-		for (auto i = 0; i < planes.size(); ++i)
+		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 100);
+		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 100);
+		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
+		CGAL::Random r{ };
+
+		if (planes.size() > 0)
 		{
-			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
-				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
-			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+			while (points.size() < 10000)
+			{
+				const auto i = r.get_int(0, planes.size());
+				const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
+					pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
+				std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+			}
 		}
 
-		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
-		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
+		using std::chrono::high_resolution_clock;
+		using std::chrono::duration_cast;
+		using std::chrono::duration;
+		using std::chrono::milliseconds;
 
-		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
-		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
-
+		auto t1 = high_resolution_clock::now();
+		std::cout << "starting NOW!" << std::endl;
 		// run function
-		const auto result = SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::SEQ>(planes, points);
+		const auto result = SPGMT::BatchPointLocation(planes, points);
+
+		auto t2 = high_resolution_clock::now();
+
+		auto ms_int = duration_cast<milliseconds>(t2 - t1);
+
+		std::cout << "Elapsed time: " << ms_int.count() << std::endl;
 
 		REQUIRE(result.myRangeWrappers.size() == points.size());
 
@@ -301,7 +329,7 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 		{
 			const auto& zoneRange = result.myRangeWrappers[i];
 			const auto& sortedPlanesIndices =
-				result.mySortedPlanesCache[zoneRange.myCacheIndex].at(zoneRange.myIndex);
+				result.mySortedPlanesCache.at(zoneRange.myCacheIndex).at(zoneRange.myIndex);
 
 			// This is the index related to the sorted list of planes in unpackedResult, NOT the list "planes"
 			const int firstPlaneAboveIdx = zoneRange.myRange.first;
@@ -334,20 +362,19 @@ TEST_CASE("BatchPointLocation with some random planes", "[BatchPointLocation]")
 				}
 			}
 		}
-
-
-
 	}
 }
 
+/*
+
 TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-PCLE]")
 {
-	constexpr auto benchmarksCount = 15;
+	constexpr auto benchmarksCount = 6;
 	constexpr auto inputCount = 10;
 	for (auto i = 0; i < benchmarksCount; ++i)
 	{
-		std::string title = "PCLE-BruteForce (" + std::to_string(i * inputCount) + ")";
-		const auto& planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount, -300, 300);
+		std::string title = "PCLE-BruteForce (" + std::to_string(160 + i * inputCount) + ")";
+		const auto& planes = SPGMT::Debug::RandomPlaneSampling(160 + i * inputCount, -300, 300);
 		BENCHMARK(title.c_str()) {
 			return SPGMT::ComputeLowerEnvelope<SPGMT::ExecutionPolicy::PAR_UNSEQ>(planes);
 		};
@@ -358,7 +385,7 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 {
 	constexpr auto benchmarksCount = 15;
 	constexpr auto inputCount = 10;
-	for (auto i = 0; i < benchmarksCount; ++i)
+	for (auto i = 0; i <= benchmarksCount; ++i)
 	{
 		std::string title = "CLE-BruteForce (" + std::to_string(i * inputCount) + ")";
 		const auto& planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount, -300, 300);
@@ -367,85 +394,71 @@ TEST_CASE("Benchmark ComputeLowerEnvelope-BruteForce", "[Benchmark-CLE]")
 		};
 	}
 }
-
-TEST_CASE("Benchmark BatchPointLocation", "[Benchmark-PBPL]")
-{
-	constexpr auto minPlaneDistance = 20.f;
-	constexpr auto pointSamplesCount = 1000;
-	constexpr auto allowSamplesOverPlane = true;
-
-	constexpr auto benchmarksCount = 5;
-	constexpr auto inputCount = 10;
-
-	for (auto i = 0; i < benchmarksCount; ++i)
-	{
-		std::string title = "PBPL (" + std::to_string(i * inputCount) + ")";
-
-		// Compute input data
-		auto planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount);
-		std::vector<SPGMT::Point3> points;
-		for (auto i = 0; i < planes.size(); ++i)
-		{
-			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
-				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
-			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
-		}
-		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
-		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
-		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
-		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
-		// End input data computation
-
-		BENCHMARK(title.c_str()) {
-			return SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::PAR_UNSEQ>(planes, points);
-		};
-	}
-}
-
+*/
 TEST_CASE("Benchmark BatchPointLocation", "[Benchmark-BPL]")
 {
 	constexpr auto minPlaneDistance = 20.f;
-	constexpr auto pointSamplesCount = 1000;
+	constexpr auto pointSamplesCount = 200;
 	constexpr auto allowSamplesOverPlane = true;
-
-	constexpr auto benchmarksCount = 5;
+	constexpr auto pointsCount = 10000;
+	constexpr auto benchmarksCount = 13;
 	constexpr auto inputCount = 10;
 
-	for (auto i = 0; i < benchmarksCount; ++i)
+	// Planes
+	const auto& allPlanes = SPGMT::Debug::RandomPlaneSampling(benchmarksCount * inputCount);
+
+	// Points
+	std::vector<SPGMT::Point3> allPoints;
+	const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(allPlanes, 1000);
+	std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(allPoints));
+	const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(allPlanes, 1000);
+	std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(allPoints));
+
+	if (allPlanes.size() > 0)
 	{
-		std::string title = "BPL (" + std::to_string(i * inputCount) + ")";
-
-		// Compute input data
-		auto planes = SPGMT::Debug::RandomPlaneSampling(i * inputCount);
-		std::vector<SPGMT::Point3> points;
-		for (auto i = 0; i < planes.size(); ++i)
+		CGAL::Random r{ 0 };
+		while (allPoints.size() < pointsCount)
 		{
+			const auto rand = r.get_int(0, allPlanes.size());
 			const auto& planePoints = SPGMT::Debug::RandomPointsPartitionedByPlane(
-				pointSamplesCount, planes[i], minPlaneDistance - 1.f, allowSamplesOverPlane);
-			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(points));
+				pointSamplesCount, allPlanes[rand], minPlaneDistance - 1.f, allowSamplesOverPlane);
+			std::copy(planePoints.mySamples.begin(), planePoints.mySamples.end(), std::back_inserter(allPoints));
 		}
-		const auto specialPoints = SPGMT::Debug::SamplePointsAlongPlaneIntersections(planes, 1000);
-		std::copy(specialPoints.begin(), specialPoints.end(), std::back_inserter(points));
-		const auto specialPointsVertices = SPGMT::Debug::SampleTriplePlaneIntersectionPoints(planes, 1000);
-		std::copy(specialPointsVertices.begin(), specialPointsVertices.end(), std::back_inserter(points));
-		// End input data computation
+	}
 
-		BENCHMARK(title.c_str()) {
-			return SPGMT::BatchPointLocation<SPGMT::ExecutionPolicy::SEQ>(planes, points);
-		};
+	for (auto cores = 1; cores < 15; ++cores)
+	{
+		// Limit the number of threads to two for all oneTBB parallel interfaces
+		oneapi::tbb::global_control global_limit(oneapi::tbb::global_control::max_allowed_parallelism, cores);
+
+		for (auto i = 0; i <= benchmarksCount; ++i)
+		{
+			const auto planesCount = i * inputCount;
+			std::vector<SPGMT::Plane> planes(allPlanes.begin(), allPlanes.begin() + planesCount);
+			const std::string title = "BPL (" + std::to_string(cores) + " cores, " + std::to_string(planesCount) + " planes, " + std::to_string(pointsCount) + " points)";
+
+			BENCHMARK(title.c_str()) {
+				return SPGMT::BatchPointLocation(planes, allPoints);
+			};
+		}
 	}
 }
 
 
 TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelope]")
 {
+	//std::cout << tbb::TBB_malloc_replacement_log(nullptr) << std::endl;
 
+	// Limit the number of threads to two for all oneTBB parallel interfaces
+	oneapi::tbb::global_control global_limit(oneapi::tbb::global_control::max_allowed_parallelism, THREADS_COUNT);
+
+/*
 	SECTION("100 random, non-vertical parallel planes")
 	{
 		constexpr auto planesCount = 100;
 		const auto& planes = SPGMT::Debug::RandomParallelPlanesSampling(planesCount);
 
-		const auto result = SPGMT::ComputeLowerEnvelope<SPGMT::ExecutionPolicy::SEQ>(planes);
+		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 
 		REQUIRE(std::holds_alternative<size_t>(result));
 		REQUIRE(SPGMT::Debug::IsLowerEnvelopeCorrect(result, planes));
@@ -464,14 +477,15 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 			planes.push_back(horizontalPlane);
 		}
 
-		const auto result = SPGMT::ComputeLowerEnvelope<ExecutionPolicy::SEQ>(planes);
+		const auto result = SPGMT::ComputeLowerEnvelope(planes);
 
 		REQUIRE(std::holds_alternative<std::vector<Edge<Point3>>>(result));
 		REQUIRE(SPGMT::Debug::IsLowerEnvelopeCorrect(result, planes));
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
-
+*/
+	
 	SECTION("20 random dual planes")
 	{
 		using namespace SPGMT;
@@ -480,13 +494,13 @@ TEST_CASE("ComputeLowerEnvelope with some parallel planes", "[ComputeLowerEnvelo
 		auto planes = Debug::RandomPlaneSamplingTest(planesCount);
 		Utils::FlipPlaneNormalsIfFacingDownwards(planes);
 		//const auto& planes = SPGMT::Debug::RandomPlaneSampling(planesCount, -300, 300);
-		auto result = SPGMT::ComputeLowerEnvelope<ExecutionPolicy::SEQ>(planes);
+		auto result = SPGMT::ComputeLowerEnvelope(planes);
 
 		//Debug::PrintLowerEnvelope(result);
 
 		REQUIRE(Debug::IsLowerEnvelopeCorrect(result, planes));
 
-		TriangulateLowerEnvelope<ExecutionPolicy::SEQ>(result);
+		TriangulateLowerEnvelope(result);
 
 		constexpr auto showTriangleEdges = true;
 		SPGMT::Visualization::VisualizeLowerEnvelope(result, showTriangleEdges);
@@ -525,6 +539,7 @@ TEST_CASE("Testing duality map properties Point->Plane, Plane->Point", "[Duality
 	}
 }
 
+
 TEST_CASE("ComputeSmartLowerEnvelope with some random planes", "[ComputeSmartLowerEnvelope]")
 {
 	SECTION("20 random dual planes")
@@ -543,30 +558,4 @@ TEST_CASE("ComputeSmartLowerEnvelope with some random planes", "[ComputeSmartLow
 
 		//SPGMT::Visualization::VisualizeLowerEnvelope(result);
 	}
-}
-
-
-int RunTests(int argc, char* argv[])
-{
-	Catch::ConfigData settings;
-	settings.benchmarkSamples = 3;
-
-	std::vector<std::string> testOrTag;
-
-	//testOrTag.push_back("[ComputeLowerEnvelope]");
-	testOrTag.push_back("[ComputeSmartLowerEnvelope]");//[Benchmark-BPL], [Benchmark-PBPL]");//"[BatchPointLocation]");//"[Benchmark-PCLE], [Benchmark-CLE]");//[BatchPointLocation]");//"[ComputeLowerEnvelope]");//[Benchmark - PCLE], [Benchmark - CLE]"); //,[Benchmark-CLE]
-
-	settings.testsOrTags = testOrTag;
-
-	Catch::Session session;
-
-	session.useConfigData(settings);
-	session.run();
-	//Catch::Session().run(argc, argv);
-	return hpx::finalize();
-}
-
-int main(int argc, char* argv[])
-{
-	return hpx::init(RunTests, argc, argv);
 }

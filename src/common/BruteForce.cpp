@@ -4,23 +4,38 @@
 
 #include <CGAL/Polygon_2_algorithms.h>
 
-#include <atomic>
+#include <CGAL/Compact_container.h>
+#include <CGAL/Concurrent_compact_container.h>
+
+#include <oneapi/tbb/info.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
+#include <oneapi/tbb/global_control.h>
+#include <oneapi/tbb/blocked_range2d.h>
+
+#include <oneapi/tbb/parallel_sort.h>
+
+#include <oneapi/tbb/task_scheduler_observer.h>
+
+#include <functional>
+#include <oneapi/tbb/task_arena.h>
+
+#include <oneapi/tbb/parallel_reduce.h>
 
 namespace SPGMT
 {
+
 	namespace
 	{
-		template<ExecutionPolicy E>
 		bool locIsVertexInLowerEnvelope(
 			const std::vector<Plane>& somePlanes,
 			const Point3& aPoint)
 		{
 			CGAL_precondition(somePlanes.size() > 0);
-			return BindExecutionPolicy<E>(hpx::all_of, somePlanes.begin(), somePlanes.end(), [&](const auto& aPlane) {
+			return std::all_of(somePlanes.begin(), somePlanes.end(), [&](const auto& aPlane) {
 				return !aPlane.has_on_positive_side(aPoint); });
 		}
 
-		template<ExecutionPolicy E>
 		std::tuple<size_t, size_t, FT, FT> locGetMinMaxPlaneAtPoint(
 			const std::vector<Plane>& somePlanes,
 			const std::vector<size_t>& somePlaneIndices,
@@ -31,36 +46,43 @@ namespace SPGMT
 			static const Vec3 up{ 0,0,1 };
 			const Line3 upLine{ aPoint, up };
 
-			std::vector<std::pair<FT, size_t>> pairs(somePlaneIndices.size());
-			std::atomic<size_t> pairsCount{ 0 };
-
-			const auto computePlaneHeight = [&](const auto aPlaneIdx)
+			const auto computePlaneHeight = [&](const size_t aPlaneIdx)
 			{
-				const auto intersection = CGAL::intersection(upLine, somePlanes[*aPlaneIdx]);
+				const auto intersection = CGAL::intersection(upLine, somePlanes[aPlaneIdx]);
 				CGAL_precondition(intersection.has_value());
 				const Point3* point = boost::get<Point3>(&*intersection);
 				CGAL_precondition(point != nullptr);
-				pairs[pairsCount.fetch_add(1, std::memory_order_relaxed)] = std::make_pair(point->z(), *aPlaneIdx);
+				return point->z();
 			};
 
-			constexpr auto pairsReductionMin = [](const auto& aFirst, const auto& aSecond)
+			size_t minIdx = 0, maxIdx = 0;
+			FT minZ, maxZ;
+
 			{
-				return aFirst.first < aSecond.first ? aFirst : aSecond;
-			};
+				const auto planeZ = computePlaneHeight(somePlaneIndices[0]);
+				minZ = planeZ;
+				maxZ = planeZ;
+			}
 
-			constexpr auto pairsReductionMax = [](const auto& aFirst, const auto& aSecond)
+			for (auto i = 1; i < somePlaneIndices.size(); ++i)
 			{
-				return aFirst.first < aSecond.first ? aSecond : aFirst;
-			};
+				const auto& planeZ = computePlaneHeight(somePlaneIndices[i]);
+				if (planeZ < minZ)
+				{
+					minZ = planeZ;
+					minIdx = somePlaneIndices[i];
+				}
+				if (planeZ > maxZ)
+				{
+					maxZ = planeZ;
+					maxIdx = somePlaneIndices[i];
+				}
+			}
 
-			BindExecutionPolicy<E>(hpx::for_loop, somePlaneIndices.begin(), somePlaneIndices.end(), computePlaneHeight);
-			const auto minPlane = BindExecutionPolicy<E>(hpx::reduce, std::next(pairs.begin()), pairs.end(), pairs[0], pairsReductionMin);
-			const auto maxPlane = BindExecutionPolicy<E>(hpx::reduce, std::next(pairs.begin()), pairs.end(), pairs[0], pairsReductionMax);
-			return std::make_tuple(minPlane.second, maxPlane.second, minPlane.first, maxPlane.first);
+			return std::make_tuple(minIdx, maxIdx, minZ, maxZ);
 		}
 
 		// Visual Help. https://www.falstad.com/dotproduct/ | https://www.geogebra.org/3d?lang=en
-		template<ExecutionPolicy E>
 		std::pair<size_t, size_t> locGetMinMaxSteepPlaneIndices(
 			const Line3& aLine,
 			const std::vector<Plane>& somePlanes,
@@ -75,393 +97,393 @@ namespace SPGMT
 			const Vec3 leftDir{ -CGAL::cross_product(Vec3{d.dx(), d.dy(), d.dz()}, up) };
 			const auto sampleLoc = aLine.point() + leftDir * 1000.f;
 
-			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<E>(somePlanes, somePlanesIndices, sampleLoc);
+			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint(somePlanes, somePlanesIndices, sampleLoc);
 			return std::make_pair(std::get<0>(minMaxPlanes), std::get<1>(minMaxPlanes));
 		}
 
-		template<ExecutionPolicy E>
 		void locSortEdgesCCW(std::vector<Edge<Point3>>& someOutEdges)
 		{
 			static const Vec3 ref{ 1, 0, 0 };
-			BindExecutionPolicy<E>(hpx::sort, someOutEdges.begin(), someOutEdges.end(),
-				[&](const auto& aFirst, const auto& aSecond) {
-					if (aFirst.myStart < aSecond.myStart)
-					{
-						return true;
-					}
-					else if (aFirst.myStart == aSecond.myStart)
-					{
-						const auto firstAngle = CGAL::approximate_angle(ref, Vec3{ aFirst.myStart, aFirst.myEnd });
-						const auto secondAngle = CGAL::approximate_angle(ref, Vec3{ aFirst.myStart, aSecond.myEnd });
-						return firstAngle < secondAngle;
-					}
-					return false;
+			static tbb::affinity_partitioner ap;
+			tbb::parallel_sort(someOutEdges.begin(), someOutEdges.end(), [&](const auto& aFirstEdge, const auto& aSecondEdge) {
+				if (aFirstEdge.myStart < aSecondEdge.myStart)
+				{
+					return true;
+				}
+				else if (aFirstEdge.myStart == aSecondEdge.myStart)
+				{
+					const auto firstAngle = CGAL::approximate_angle(ref, Vec3{ aFirstEdge.myStart, aFirstEdge.myEnd });
+					const auto secondAngle = CGAL::approximate_angle(ref, Vec3{ aFirstEdge.myStart, aSecondEdge.myEnd });
+					return firstAngle < secondAngle;
+				}
+				return false;
 				});
-		}
-
-		void locInsertInfinityPoints(
-			const std::tuple<size_t, Point3>& aMinPoint,
-			const std::tuple<size_t, Point3>& aMaxPoint,
-			const std::vector<Line3>& someUniqueLines,
-			const size_t aFiniteVerticesCount,
-			std::vector<std::tuple<size_t, Point3>>& someOutVertices)
-		{
-			constexpr auto distance = 1000.f;
-
-			const auto minLineIdx = std::get<0>(aMinPoint);
-			const auto maxLineIdx = std::get<0>(aMaxPoint);
-
-			const auto& minusInfPoint = std::get<1>(aMinPoint) - someUniqueLines[minLineIdx].to_vector() * distance;
-			const auto& plusInfPoint = std::get<1>(aMaxPoint) + someUniqueLines[maxLineIdx].to_vector() * distance;
-
-			CGAL_precondition(someUniqueLines[minLineIdx].has_on(minusInfPoint));
-			CGAL_precondition(someUniqueLines[maxLineIdx].has_on(plusInfPoint));
-
-			const auto minusInfOutIdx = aFiniteVerticesCount + 2 * minLineIdx;
-			const auto plusInfOutIdx = aFiniteVerticesCount + 2 * maxLineIdx + 1;
-
-			someOutVertices[minusInfOutIdx] = std::make_tuple(minLineIdx, minusInfPoint);
-			someOutVertices[plusInfOutIdx] = std::make_tuple(maxLineIdx, plusInfPoint);
 		}
 
 		struct BruteForceData
 		{
 			std::vector<std::tuple<size_t, size_t>> myMinMaxPlanes;
 			std::vector<std::tuple<size_t, Point3>> myVertices;
-			std::vector<size_t> myRanges;
+			std::vector<std::tuple<size_t, size_t>> myRanges;
 			std::optional<LowerEnvelope3d> myLowerEnvelopeOpt;
 		};
 
-		template<ExecutionPolicy E>
-		bool locIsEdgeInLowerEnvelope(
+		void locComputeData(
 			const std::vector<Plane>& somePlanes,
-			const BruteForceData& aData,
-			const size_t aRangeIdx,
-			const size_t aCurrIdx,
-			Edge<Point3>& aFirstOutEdge,
-			Edge<Point3>& aSecondOutEdge,
-			int& anOutSegmentStart)
-		{
-			const auto lineIdx = std::get<0>(aData.myVertices[aCurrIdx]);
-			const auto& midpoint = CGAL::midpoint(
-				std::get<1>(aData.myVertices[aCurrIdx]),
-				std::get<1>(aData.myVertices[aCurrIdx + 1]));
-
-			const auto isSegmentGood = locIsVertexInLowerEnvelope<E>(somePlanes, midpoint);
-
-			if (isSegmentGood && anOutSegmentStart == -1)
-			{
-				anOutSegmentStart = aCurrIdx;
-			}
-
-			const auto isStartIdxCase = anOutSegmentStart != -1 && !isSegmentGood;
-			const auto isEndIdxCase = anOutSegmentStart != -1 && isSegmentGood && aCurrIdx == (aData.myRanges[aRangeIdx + 1] - 2);
-
-			if (isStartIdxCase || isEndIdxCase)
-			{
-				const int segmentEndIdx = isStartIdxCase ? aCurrIdx : (aCurrIdx + 1);
-				const auto caseIdx =
-					static_cast<size_t>(anOutSegmentStart == aData.myRanges[aRangeIdx]) |
-					static_cast<size_t>(segmentEndIdx == aData.myRanges[aRangeIdx + 1] - 1) << 1;
-
-				switch (caseIdx)
-				{
-				case 0:
-					aFirstOutEdge.myType = EdgeType::SEGMENT;
-					aSecondOutEdge.myType = EdgeType::SEGMENT;
-					break;
-				case 1:
-					aFirstOutEdge.myType = EdgeType::HALF_EDGE_EF;
-					aSecondOutEdge.myType = EdgeType::HALF_EDGE_SF;
-					break;
-				case 2:
-					aFirstOutEdge.myType = EdgeType::HALF_EDGE_SF;
-					aSecondOutEdge.myType = EdgeType::HALF_EDGE_EF;
-					break;
-				default:
-					aFirstOutEdge.myType = EdgeType::LINE;
-					aSecondOutEdge.myType = EdgeType::LINE;
-					break;
-				}
-
-				const auto& startVertex = std::get<1>(aData.myVertices[anOutSegmentStart]);
-				const auto& endVertex = std::get<1>(aData.myVertices[segmentEndIdx]);
-
-				aFirstOutEdge.myStart = startVertex;
-				aFirstOutEdge.myEnd = endVertex;
-				aFirstOutEdge.myLowestLeftPlane = std::get<0>(aData.myMinMaxPlanes[lineIdx]);
-
-				aSecondOutEdge.myStart = endVertex;
-				aSecondOutEdge.myEnd = startVertex;
-				aSecondOutEdge.myLowestLeftPlane = std::get<1>(aData.myMinMaxPlanes[lineIdx]);
-				anOutSegmentStart = -1;
-				return true;
-			}
-			return false;
-		}
-
-		template<ExecutionPolicy E = ExecutionPolicy::SEQ>
-		void locComputeData(const std::vector<Plane>& somePlanes, BruteForceData& anOutData)
+			BruteForceData& anOutData)
 		{
 			static const Point3 zero{ 0,0,0 };
-			constexpr auto policy = ExecutionPolicy::SEQ;
+			static const Vec3 up{ 0,0,1 };
 			constexpr auto distance = 1000.f;
-			using LineWrapper = std::tuple<Point3, Point3, size_t>;
-			std::vector<LineWrapper> lines;
 
-			const auto planePlaneIntersection = [&](size_t i, size_t k, std::atomic<size_t>* anOutCounterPtr)
+			std::vector<Line3> uniqueLines;
+
+			// Unique lines and MinMax planes
+
 			{
-				const auto intersection =
-					CGAL::intersection(somePlanes[i], somePlanes[k]);
-				if (intersection)
-				{
-					const Line3* line = boost::get<Line3>(&*intersection);
-					CGAL_precondition(line != nullptr);
+				using LW = std::tuple<Point3, Point3, FT, size_t>;
+				std::vector<LW> lines;
 
-					auto start = line->projection(zero);
-					auto end = start + line->to_vector() * FT(distance);
-					if (start > end) std::swap(start, end);
-					CGAL_precondition(start < end);
+				tbb::enumerable_thread_specific<std::vector<LW>> data;
+				tbb::enumerable_thread_specific<size_t> count{ 0 };
+				static tbb::affinity_partitioner ap;
 
-					if constexpr (E == ExecutionPolicy::SEQ)
-					{
-						lines.emplace_back(std::make_tuple(start, end, i));
-						lines.emplace_back(std::make_tuple(start, end, k));
-					}
-					else
-					{
-						CGAL_precondition(anOutCounterPtr != nullptr);
-						const auto outIdx = anOutCounterPtr->fetch_add(2, std::memory_order_relaxed);
-						lines[outIdx] = std::make_tuple(start, end, i);
-						lines[outIdx + 1] = std::make_tuple(start, end, k);
-					}
-				}
-			};
+				tbb::parallel_for(tbb::blocked_range2d<int, int>(0, somePlanes.size(), 0, somePlanes.size()),
+					[&](tbb::blocked_range2d<int, int>& r) {
+						if (r.rows().end() > r.cols().begin())
+						{
+							for (int i = r.rows().begin(); i < r.rows().end(); ++i)
+							{
+								for (int k = r.cols().begin(); k < r.cols().end(); ++k)
+								{
+									if (i <= k) continue;
+									const auto intersection = CGAL::intersection(somePlanes[k], somePlanes[i]);
+									if (intersection)
+									{
+										const Line3* line = boost::get<Line3>(&*intersection);
+										CGAL_precondition(line != nullptr);
 
-			// Find intersection lines
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				for (size_t i = 0; i < somePlanes.size(); ++i)
-				{
-					for (size_t k = i + 1; k < somePlanes.size(); ++k)
-					{
-						planePlaneIntersection(i, k, nullptr);
-					}
-				}
-			}
-			else
-			{
-				lines.resize(somePlanes.size() * (somePlanes.size() - 1));
-				std::atomic<size_t> counter{ 0 };
-				BindExecutionPolicy<E>(hpx::for_loop, 0, somePlanes.size(), [&](size_t i) {
-					BindExecutionPolicy<E>(hpx::for_loop, i + 1, somePlanes.size(), [&](size_t k) {
-						planePlaneIntersection(i, k, &counter);
-						});
+										// Sort line segment
+										auto start = line->projection(zero);
+										auto end = start + line->to_vector() * FT(1000.f);
+										if (end < start) std::swap(start, end);
+
+										// Compute left planes Z
+										const auto& d = Vec3{ start, end }.direction();
+										const Vec3 leftDir{ -CGAL::cross_product(Vec3{d.dx(), d.dy(), d.dz()}, up) };
+										const auto sampleLoc = start + leftDir * FT(1000.f);
+										const Line3 vLine{ sampleLoc, up };
+
+										const auto firstPlaneIntersection = CGAL::intersection(vLine, somePlanes[i]);
+										const auto secondPlaneIntersection = CGAL::intersection(vLine, somePlanes[k]);
+
+										CGAL_precondition(firstPlaneIntersection && secondPlaneIntersection);
+
+										const Point3* firstPoint = boost::get<Point3>(&*firstPlaneIntersection);
+										CGAL_precondition(firstPoint != nullptr);
+
+										const Point3* secondPoint = boost::get<Point3>(&*secondPlaneIntersection);
+										CGAL_precondition(secondPoint != nullptr);
+
+										data.local().emplace_back(std::make_tuple(start, end, firstPoint->z(), i));
+										data.local().emplace_back(std::make_tuple(start, end, secondPoint->z(), k));
+
+										count.local() += 2;
+									}
+								}
+							}
+						}
 					});
-				lines.resize(counter.load());
+
+				// Copy data back sequentially (possible optimization)
+				lines.resize(count.combine(std::plus<size_t>()));
+				auto itemsCount = 0;
+				for (const auto& chunk : data)
+				{
+					std::copy(chunk.begin(), chunk.end(), lines.begin() + itemsCount);
+					itemsCount += chunk.size();
+				}
+				lines.resize(itemsCount);
+
+				// Sort data
+				{
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_sort(lines.begin(), lines.end());
+				}
+
+				// Pick unique lines and their min-max planes
+				size_t i = 0;
+				while (i < lines.size())
+				{
+					std::tuple<size_t, size_t> minMax;
+					uniqueLines.emplace_back(Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) });
+
+					std::get<0>(minMax) = std::get<3>(lines[i]);
+
+					const auto k = i;
+					while (++i < lines.size() &&
+						std::get<0>(lines[k]) == std::get<0>(lines[i]) &&
+						std::get<0>(lines[k]) == std::get<0>(lines[i]));
+
+					std::get<1>(minMax) = std::get<3>(lines[i - 1]);
+
+					anOutData.myMinMaxPlanes.emplace_back(minMax);
+				}
 			}
-
-			BindExecutionPolicy<E>(hpx::sort, lines.begin(), lines.end());
-
-			lines.erase(BindExecutionPolicy<E>(hpx::unique, lines.begin(), lines.end()), lines.end());
+			// END
 
 			// If all the lines are parallel then return lower envelope
-			const auto areAllLinesParallel = Utils::AreItemsParallel<E>(lines,
-				[](const auto& aLine) { return Dir3{ std::get<1>(aLine) - std::get<0>(aLine) }; });
+			const auto areAllLinesParallel = Utils::AreItemsParallel(uniqueLines,
+				[](const auto& aLine) { return aLine.direction(); });
 			if (areAllLinesParallel)
 			{
-				auto lineIter = BindExecutionPolicy<E>(hpx::find_if, lines.begin(), lines.end(),
-					[&](const auto& aLine) { return locIsVertexInLowerEnvelope<E>(somePlanes, std::get<1>(aLine)); });
+				static tbb::affinity_partitioner ap;
+				std::atomic<int> index{ -1 };
+				tbb::parallel_for(tbb::blocked_range<int>(0, uniqueLines.size()),
+					[&](tbb::blocked_range<int>& r) {
+						for (auto i = r.begin(); i < r.end(); ++i)
+						{
+							if (locIsVertexInLowerEnvelope(somePlanes, uniqueLines[i].point()))
+							{
+								index.store(i);
+								tbb::task::current_context()->cancel_group_execution();
+							}
+						}
+					});
 
-				std::vector<size_t> planesIndices;
+				CGAL_postcondition(index.load() > -1);
 
-				for (auto it = lineIter;
-					it != lines.end() &&
-					std::get<0>(*lineIter) == std::get<0>(*it) &&
-					std::get<1>(*lineIter) == std::get<1>(*it);
-					++it)
-				{
-					planesIndices.emplace_back(std::get<2>(*it));
-				}
-
-				if constexpr (E != ExecutionPolicy::SEQ)
-				{
-					using RI = std::vector<LineWrapper>::reverse_iterator;
-					for (RI it = std::make_reverse_iterator(std::prev(lineIter));
-						it != lines.rend() &&
-						std::get<0>(*lineIter) == std::get<0>(*it) &&
-						std::get<1>(*lineIter) == std::get<1>(*it);
-						++it)
-					{
-						planesIndices.emplace_back(std::get<2>(*it));
-					}
-				}
-
-				const Line3 lowerEnvelopeLine{ std::get<0>(*lineIter), std::get<1>(*lineIter) };
-				const auto minMaxPlanes = locGetMinMaxSteepPlaneIndices<E>(lowerEnvelopeLine, somePlanes, planesIndices);
-				const auto& start = lowerEnvelopeLine.projection(zero);
-				const auto& end = start + lowerEnvelopeLine.to_vector() * distance;
+				const auto& minMaxPlanes = anOutData.myMinMaxPlanes[index.load()];
+				const auto& start = uniqueLines[index.load()].projection(zero);
+				const auto& end = start + uniqueLines[index.load()].to_vector() * distance;
 
 				std::vector<Edge<Point3>> edges(2);
 				edges[0].myStart = start < end ? start : end;
 				edges[0].myEnd = start < end ? end : start;
-				edges[0].myLowestLeftPlane = minMaxPlanes.first;
+				edges[0].myLowestLeftPlane = std::get<0>(minMaxPlanes);
 				edges[0].myType = EdgeType::LINE;
 				edges[1].myStart = edges[0].myEnd;
 				edges[1].myEnd = edges[0].myStart;
 				edges[1].myType = EdgeType::LINE;
-				edges[1].myLowestLeftPlane = minMaxPlanes.second;
+				edges[1].myLowestLeftPlane = std::get<1>(minMaxPlanes);
 
 				anOutData.myLowerEnvelopeOpt = edges;
 				return;
 			}
 
-			// Compute min-max planes and unique lines
-			std::vector<Line3> uniqueLines;
-
-			const auto uniqueLinesSelection = [&](size_t i, std::atomic<size_t>* aCounterPtr)
-			{
-				std::vector<size_t> indices;
-
-				size_t k = i;
-				while (k < lines.size() &&
-					std::get<0>(lines[k]) == std::get<0>(lines[i]) &&
-					std::get<1>(lines[k]) == std::get<1>(lines[i]))
-				{
-					indices.emplace_back(std::get<2>(lines[k++]));
-				}
-
-				constexpr auto innerPolicy = ExecutionPolicy::SEQ;
-
-				if constexpr (E == ExecutionPolicy::SEQ)
-				{
-					uniqueLines.emplace_back(Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) });
-					anOutData.myMinMaxPlanes.emplace_back(
-						locGetMinMaxSteepPlaneIndices<innerPolicy>(uniqueLines.back(), somePlanes, indices));
-				}
-				else
-				{
-					CGAL_precondition(aCounterPtr != nullptr);
-					const auto outIdx = aCounterPtr->fetch_add(1, std::memory_order_relaxed);
-					uniqueLines[outIdx] = Line3{ std::get<0>(lines[i]), std::get<1>(lines[i]) };
-					anOutData.myMinMaxPlanes[outIdx] =
-						locGetMinMaxSteepPlaneIndices<innerPolicy>(uniqueLines[outIdx], somePlanes, indices);
-				}
-
-				return k;
-			};
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				size_t i = 0;
-				while ((i = uniqueLinesSelection(i, nullptr)) < lines.size());
-			}
-			else
-			{
-				uniqueLines.resize(lines.size() / 2);
-				anOutData.myMinMaxPlanes.resize(lines.size() / 2);
-				std::atomic<size_t> counter{ 0 };
-
-				BindExecutionPolicy<E>(hpx::for_loop, uniqueLinesSelection(0, &counter), lines.size(), [&](size_t i) {
-					if (std::get<0>(lines[i - 1]) != std::get<0>(lines[i]) ||
-						std::get<1>(lines[i - 1]) != std::get<1>(lines[i]))
-					{
-						uniqueLinesSelection(i, &counter);
-					}
-					});
-
-				anOutData.myMinMaxPlanes.resize(counter.load());
-				uniqueLines.resize(counter.load());
-			}
-
-			const auto lineLineIntersection = [&](size_t i, size_t k, std::atomic<size_t>* aCounterPtr)
-			{
-				const auto intersection =
-					CGAL::intersection(uniqueLines[i], uniqueLines[k]);
-				if (intersection)
-				{
-					const Point3* point = boost::get<Point3>(&*intersection);
-					CGAL_precondition(point != nullptr);
-
-					if constexpr (E == ExecutionPolicy::SEQ)
-					{
-						anOutData.myVertices.emplace_back(std::make_tuple(i, *point));
-						anOutData.myVertices.emplace_back(std::make_tuple(k, *point));
-					}
-					else
-					{
-						CGAL_precondition(aCounterPtr != nullptr);
-						const auto outIdx = aCounterPtr->fetch_add(2, std::memory_order_relaxed);
-						anOutData.myVertices[outIdx] = std::make_tuple(i, *point);
-						anOutData.myVertices[outIdx + 1] = std::make_tuple(k, *point);
-					}
-				}
-			};
 
 			// Compute vertices
-			if constexpr (E == ExecutionPolicy::SEQ)
 			{
-				for (size_t i = 0; i < uniqueLines.size(); ++i)
-				{
-					for (size_t k = i + 1; k < uniqueLines.size(); ++k)
-					{
-						lineLineIntersection(i, k, nullptr);
-					}
-				}
-			}
-			else
-			{
-				anOutData.myVertices.resize(uniqueLines.size() * (uniqueLines.size() - 1));
-				std::atomic<size_t> counter{ 0 };
+				using VW = std::tuple<size_t, Point3>;
 
-				BindExecutionPolicy<E>(hpx::for_loop, 0, uniqueLines.size(), [&](size_t i) {
-					BindExecutionPolicy<E>(hpx::for_loop, i + 1, uniqueLines.size(), [&](size_t k) {
-						lineLineIntersection(i, k, &counter);
-						});
+				tbb::enumerable_thread_specific<std::vector<VW>> data;
+				tbb::enumerable_thread_specific<size_t> count{ 0 };
+				static tbb::affinity_partitioner ap;
+
+				tbb::parallel_for(tbb::blocked_range2d<int, int>(0, uniqueLines.size(), 0, uniqueLines.size()),
+					[&](tbb::blocked_range2d<int, int>& r) {
+						if (r.rows().end() > r.cols().begin())
+						{
+							for (int i = r.rows().begin(); i < r.rows().end(); ++i)
+							{
+								for (int k = r.cols().begin(); k < r.cols().end(); ++k)
+								{
+									if (i <= k) continue;
+									const auto intersection = CGAL::intersection(uniqueLines[k], uniqueLines[i]);
+									if (intersection)
+									{
+										const Point3* point = boost::get<Point3>(&*intersection);
+										CGAL_precondition(point != nullptr);
+
+										data.local().emplace_back(std::make_pair(i, *point));
+										data.local().emplace_back(std::make_pair(k, *point));
+
+										count.local() += 2;
+									}
+								}
+							}
+						}
 					});
 
-				anOutData.myVertices.resize(counter.load());
-			}
-
-			// Sort and remove duplicate vertices
-			BindExecutionPolicy<E>(hpx::sort, anOutData.myVertices.begin(), anOutData.myVertices.end());
-			anOutData.myVertices.erase(
-				BindExecutionPolicy<E>(hpx::unique, anOutData.myVertices.begin(), anOutData.myVertices.end()), anOutData.myVertices.end());
-
-			const auto finiteVerticesCount = anOutData.myVertices.size();
-			anOutData.myVertices.resize(finiteVerticesCount + 2 * uniqueLines.size());
-
-			anOutData.myRanges.resize(uniqueLines.size() + 1);
-			anOutData.myRanges.front() = 0;
-			anOutData.myRanges.back() = anOutData.myVertices.size();
-
-			// Compute points at infinity for first and last vertex in vector
-			locInsertInfinityPoints(
-				anOutData.myVertices[0],
-				anOutData.myVertices[finiteVerticesCount - 1],
-				uniqueLines, finiteVerticesCount, anOutData.myVertices);
-
-			BindExecutionPolicy<E>(hpx::for_loop, 1, finiteVerticesCount - 1, [&](size_t i) {
-				if (std::get<0>(anOutData.myVertices[i]) <
-					std::get<0>(anOutData.myVertices[i + 1]))
+				// Copy data back sequentially (possible optimization)
+				anOutData.myVertices.resize(count.combine(std::plus<size_t>()));
+				auto itemsCount = 0;
+				for (const auto& chunk : data)
 				{
-					locInsertInfinityPoints(
-						anOutData.myVertices[i + 1],
-						anOutData.myVertices[i],
-						uniqueLines, finiteVerticesCount, anOutData.myVertices);
-
-					const auto nextLineIdx = std::get<0>(anOutData.myVertices[i + 1]);
-					anOutData.myRanges[nextLineIdx] = (i + 1) + 2 * nextLineIdx;
+					std::copy(chunk.begin(), chunk.end(), anOutData.myVertices.begin() + itemsCount);
+					itemsCount += chunk.size();
 				}
-				});
+				anOutData.myVertices.resize(itemsCount);
 
-			// Sort vertices
-			BindExecutionPolicy<E>(hpx::sort, anOutData.myVertices.begin(), anOutData.myVertices.end());
-			BindExecutionPolicy<E>(hpx::sort, anOutData.myRanges.begin(), anOutData.myRanges.end());
+				// Sort data
+				{
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_sort(anOutData.myVertices.begin(), anOutData.myVertices.end());
+				}
+
+				// Remove duplicate vertices
+				anOutData.myVertices.erase(
+					std::unique(anOutData.myVertices.begin(), anOutData.myVertices.end()),
+					anOutData.myVertices.end());
+			}
+			// END
+
+			// Add vertices at infinity and compute ranges
+			{
+				size_t i = 0;
+				const auto prevVerticesSize = anOutData.myVertices.size();
+				while (i < prevVerticesSize)
+				{
+					const auto lineIdx = std::get<0>(anOutData.myVertices[i]);
+					const auto& minPoint = std::get<1>(anOutData.myVertices[i]);
+
+					while (++i < prevVerticesSize &&
+						std::get<0>(anOutData.myVertices[i]) == std::get<0>(anOutData.myVertices[i - 1]));
+
+					const auto& maxPoint = std::get<1>(anOutData.myVertices[i - 1]);
+
+					const auto& minusInfPoint = minPoint - uniqueLines[lineIdx].to_vector() * FT(distance);
+					const auto& plusInfPoint = maxPoint + uniqueLines[lineIdx].to_vector() * FT(distance);
+
+					anOutData.myVertices.emplace_back(std::make_tuple(lineIdx, minusInfPoint));
+					anOutData.myVertices.emplace_back(std::make_tuple(lineIdx, plusInfPoint));
+				}
+
+				// Sort data
+				{
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_sort(anOutData.myVertices.begin(), anOutData.myVertices.end());
+				}
+
+				// Compute ranges
+				i = 0;
+				while (i < anOutData.myVertices.size())
+				{
+					std::tuple<size_t, size_t> range;
+					std::get<0>(range) = i;
+
+					while (++i < anOutData.myVertices.size() &&
+						std::get<0>(anOutData.myVertices[i]) == std::get<0>(anOutData.myVertices[i - 1]));
+
+					std::get<1>(range) = i;
+					anOutData.myRanges.emplace_back(range);
+				}
+			}
+			// END
 		}
+
+
 	}
 
-	template<ExecutionPolicy E>
+	namespace Observers
+	{
+		/*
+		template<typename T>
+		class TaskObserver : public tbb::task_scheduler_observer
+		{
+
+		public:
+			tbb::enumerable_thread_specific<std::vector<T>> myData;
+
+			t(std::vector<Point2>& abc, size_t& finalCount)
+				: tbb::task_scheduler_observer(), out(abc), fc(finalCount) {
+				observe(true); // activate the observer
+			}
+			~t() {
+				observe(false); // deactivate the observer
+
+				for (auto& t : myData) {
+					fc += t.size();
+				}
+			}
+			void on_scheduler_entry(bool worker) {
+				CGAL_precondition(myData.local().empty());
+			}
+			void on_scheduler_exit(bool worker) {
+				const int start = c.fetch_add(myData.local().size());
+				std::copy(myData.local().begin()myData.local().end(), out.begin() + start);
+			}
+			size_t& fc;
+			std::atomic<size_t> c{ 0 };
+			std::vector<Point2>& out;
+
+		};
+	*/
+	}
+
+
+	bool locIsEdgeInLowerEnvelope(
+		const std::vector<Plane>& somePlanes,
+		const BruteForceData& aData,
+		const size_t aRangeIdx,
+		const size_t aCurrIdx,
+		Edge<Point3>& aFirstOutEdge,
+		Edge<Point3>& aSecondOutEdge,
+		int& anOutSegmentStart)
+	{
+		const auto lineIdx = std::get<0>(aData.myVertices[aCurrIdx]);
+		const auto& midpoint = CGAL::midpoint(
+			std::get<1>(aData.myVertices[aCurrIdx]),
+			std::get<1>(aData.myVertices[aCurrIdx + 1]));
+
+		const auto isSegmentGood = locIsVertexInLowerEnvelope(somePlanes, midpoint);
+
+		if (isSegmentGood && anOutSegmentStart == -1)
+		{
+			anOutSegmentStart = aCurrIdx;
+		}
+
+		const auto rangeStart = std::get<0>(aData.myRanges[aRangeIdx]);
+		const auto rangeEnd = std::get<1>(aData.myRanges[aRangeIdx]);
+
+		const auto isStartIdxCase = anOutSegmentStart != -1 && !isSegmentGood;
+		const auto isEndIdxCase = anOutSegmentStart != -1 && isSegmentGood && aCurrIdx == (rangeEnd - 2);
+
+		if (isStartIdxCase || isEndIdxCase)
+		{
+			const int segmentEndIdx = isStartIdxCase ? aCurrIdx : (aCurrIdx + 1);
+			const auto caseIdx =
+				static_cast<size_t>(anOutSegmentStart == rangeStart) |
+				static_cast<size_t>(segmentEndIdx == rangeEnd - 1) << 1;
+
+			switch (caseIdx)
+			{
+			case 0:
+				aFirstOutEdge.myType = EdgeType::SEGMENT;
+				aSecondOutEdge.myType = EdgeType::SEGMENT;
+				break;
+			case 1:
+				aFirstOutEdge.myType = EdgeType::HALF_EDGE_EF;
+				aSecondOutEdge.myType = EdgeType::HALF_EDGE_SF;
+				break;
+			case 2:
+				aFirstOutEdge.myType = EdgeType::HALF_EDGE_SF;
+				aSecondOutEdge.myType = EdgeType::HALF_EDGE_EF;
+				break;
+			default:
+				aFirstOutEdge.myType = EdgeType::LINE;
+				aSecondOutEdge.myType = EdgeType::LINE;
+				break;
+			}
+
+			const auto& startVertex = std::get<1>(aData.myVertices[anOutSegmentStart]);
+			const auto& endVertex = std::get<1>(aData.myVertices[segmentEndIdx]);
+
+			aFirstOutEdge.myStart = startVertex;
+			aFirstOutEdge.myEnd = endVertex;
+			aFirstOutEdge.myLowestLeftPlane = std::get<0>(aData.myMinMaxPlanes[lineIdx]);
+
+			aSecondOutEdge.myStart = endVertex;
+			aSecondOutEdge.myEnd = startVertex;
+			aSecondOutEdge.myLowestLeftPlane = std::get<1>(aData.myMinMaxPlanes[lineIdx]);
+			anOutSegmentStart = -1;
+			return true;
+		}
+		return false;
+	}
+
+
+
 	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes)
 	{
 		if (somePlanes.empty())
@@ -475,7 +497,7 @@ namespace SPGMT
 		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		//CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 
-		const auto arePlanesParallel = Utils::AreItemsParallel<E>(somePlanes,
+		const auto arePlanesParallel = Utils::AreItemsParallel(somePlanes,
 			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
 
 		// Edge case: all planes are parallel
@@ -484,158 +506,104 @@ namespace SPGMT
 			static const Point3 origin{ 0,0,0 };
 			std::vector<size_t> indices(somePlanes.size());
 			std::iota(indices.begin(), indices.end(), 0);
-			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint<E>(somePlanes, indices, origin);
+			const auto minMaxPlanes = locGetMinMaxPlaneAtPoint(somePlanes, indices, origin);
 			CGAL_precondition(std::get<0>(minMaxPlanes) != -1);
 			return std::get<0>(minMaxPlanes);
 		}
 
 		BruteForceData data;
-		locComputeData<E>(somePlanes, data);
+		locComputeData(somePlanes, data);
 
 		if (data.myLowerEnvelopeOpt.has_value())
 		{
 			return data.myLowerEnvelopeOpt.value();
 		}
 
-		std::vector<Edge<Point3>> edges;
+		std::vector<Edge<Point3>> result;
 
-		const auto buildEdges = [&](size_t aRangeIdx, std::atomic<size_t>* aCounterPtr)
 		{
-			int segmentStartIdx = -1;
-			Edge<Point3> edge, oppEdge;
-			for (size_t i = data.myRanges[aRangeIdx]; i < data.myRanges[aRangeIdx + 1] - 1; ++i)
-			{
-				if (locIsEdgeInLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes, data, aRangeIdx, i, edge, oppEdge, segmentStartIdx))
-				{
-					if constexpr (E == ExecutionPolicy::SEQ)
+			tbb::enumerable_thread_specific<std::vector<Edge<Point3>>> edges;
+			tbb::enumerable_thread_specific<size_t> count{ 0 };
+			static tbb::affinity_partitioner ap;
+
+			tbb::parallel_for(tbb::blocked_range<int>(0, data.myRanges.size()),
+				[&](tbb::blocked_range<int>& r) {
+					for (int i = r.begin(); i < r.end(); ++i)
 					{
-						edges.emplace_back(edge);
-						edges.emplace_back(oppEdge);
-					}
-					else
-					{
-						CGAL_precondition(aCounterPtr != nullptr);
-						const auto outIdx = aCounterPtr->fetch_add(2, std::memory_order_relaxed);
-						edges[outIdx] = edge;
-						edges[outIdx + 1] = oppEdge;
-					}
-				}
-			}
-		};
+						int segmentStartIdx = -1;
+						Edge<Point3> edge, oppEdge;
 
-		if constexpr (E == ExecutionPolicy::SEQ)
-		{
-			for (size_t rangeIdx = 0; rangeIdx < data.myRanges.size() - 1; ++rangeIdx)
-			{
-				buildEdges(rangeIdx, nullptr);
-			}
-		}
-		else
-		{
-			edges.resize(2 * data.myVertices.size());
-			std::atomic<size_t> counter{ 0 };
-
-			BindExecutionPolicy<E>(hpx::for_loop, 0, data.myRanges.size() - 1, [&](const size_t aRangeIdx)
-				{
-					buildEdges(aRangeIdx, &counter);
+						for (auto k = std::get<0>(data.myRanges[i]); k < std::get<1>(data.myRanges[i]) - 1; ++k)
+						{
+							if (locIsEdgeInLowerEnvelope(somePlanes, data, i, k, edge, oppEdge, segmentStartIdx))
+							{
+								edges.local().emplace_back(edge);
+								edges.local().emplace_back(oppEdge);
+								count.local() += 2;
+							}
+						}
+					}
 				});
-			edges.resize(counter.load());
+
+			// Copy data back sequentially (possible optimization)
+			result.resize(count.combine(std::plus<size_t>()));
+			auto itemsCount = 0;
+			for (const auto& chunk : edges)
+			{
+				std::copy(chunk.begin(), chunk.end(), result.begin() + itemsCount);
+				itemsCount += chunk.size();
+			}
+			result.resize(itemsCount);
 		}
 
-		// Sort edges
-		locSortEdgesCCW<E>(edges);
+		locSortEdgesCCW(result);
 
-		return edges;
+		return result;
 	}
 
-	template<ExecutionPolicy E>
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope)
 	{
 		CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(anOutLowerEnvelope));
 		auto& edges = std::get<std::vector<Edge<Point3>>>(anOutLowerEnvelope);
 		CGAL_precondition(edges.size() > 2);
 
-		BindExecutionPolicy<E>(hpx::sort, edges.begin(), edges.end(), [](const auto& aFirstEdge, const auto& aSecondEdge)
+		tbb::parallel_sort(edges.begin(), edges.end(), [](const auto& aFirstEdge, const auto& aSecondEdge)
 			{
 				return aFirstEdge.myLowestLeftPlane < aSecondEdge.myLowestLeftPlane ||
 					(aFirstEdge.myLowestLeftPlane == aSecondEdge.myLowestLeftPlane && aFirstEdge.myType < aSecondEdge.myType);
 			});
 
-		if constexpr (E == ExecutionPolicy::SEQ)
+		for (int i = 1, lastStart = 0, prevStartIdx = -1, edgesOldSize = edges.size(); i <= edgesOldSize; ++i)
 		{
-			for (int i = 1, lastStart = 0, prevStartIdx = -1, edgesOldSize = edges.size(); i <= edgesOldSize; ++i)
+			if (i == edgesOldSize ||
+				edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane)
 			{
-				if (i == edgesOldSize ||
-					edges[lastStart].myLowestLeftPlane != edges[i].myLowestLeftPlane)
+				for (auto k = lastStart + 1; k < i; ++k)
 				{
-					for (auto k = lastStart + 1; k < i; ++k)
+					if (prevStartIdx > -1 && (k == prevStartIdx || edges[k].myEnd == edges[prevStartIdx].myStart))
 					{
-						if (prevStartIdx > -1 && (k == prevStartIdx || edges[k].myEnd == edges[prevStartIdx].myStart))
-						{
-							continue;
-						}
-
-						CGAL_precondition(edges[lastStart].myStart != edges[k].myEnd);
-
-						edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[k].myEnd, EdgeType::SEGMENT_TRIANGLE });
-						edges.emplace_back(Edge<Point3>{ edges[k].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
+						continue;
 					}
 
-					lastStart = i;
-					prevStartIdx = -1;
+					CGAL_precondition(edges[lastStart].myStart != edges[k].myEnd);
+
+					edges.emplace_back(Edge<Point3>{ edges[lastStart].myStart, edges[k].myEnd, EdgeType::SEGMENT_TRIANGLE });
+					edges.emplace_back(Edge<Point3>{ edges[k].myEnd, edges[lastStart].myStart, EdgeType::SEGMENT_TRIANGLE });
 				}
-				else if (edges[i].myEnd == edges[lastStart].myStart)
-				{
-					CGAL_precondition(prevStartIdx == -1);
-					prevStartIdx = i;
-				}
+
+				lastStart = i;
+				prevStartIdx = -1;
+			}
+			else if (edges[i].myEnd == edges[lastStart].myStart)
+			{
+				CGAL_precondition(prevStartIdx == -1);
+				prevStartIdx = i;
 			}
 		}
-		else
-		{
-			const auto edgesOldSize = edges.size();
-			// Dummy upper-bound
-			edges.resize(edgesOldSize * 4);
-			std::atomic<size_t> atomicCounter{ edgesOldSize };
 
-			BindExecutionPolicy<E>(hpx::for_loop, 0, edgesOldSize, [&](size_t i) {
-				if (i == 0 ||
-					edges[i].myLowestLeftPlane != edges[i - 1].myLowestLeftPlane)
-				{
-					const auto startIdx = i;
-					auto prevStartIdx = -1;
-					while (++i < edgesOldSize &&
-						edges[i].myLowestLeftPlane == edges[startIdx].myLowestLeftPlane)
-					{
-						if (edges[i].myEnd == edges[startIdx].myStart)
-						{
-							CGAL_precondition(prevStartIdx == -1);
-							prevStartIdx = i;
-						}
-					}
-
-					const auto newEdgesCount = i - startIdx - 1 - 2 * static_cast<int>(prevStartIdx > -1);
-					auto outIdx = atomicCounter.fetch_add(newEdgesCount, std::memory_order_relaxed);
-					i = startIdx;
-
-					while (++i < edgesOldSize && edges[i].myLowestLeftPlane == edges[startIdx].myLowestLeftPlane)
-					{
-						if (prevStartIdx > -1 && (i == prevStartIdx || edges[i].myEnd == edges[prevStartIdx].myStart))
-						{
-							continue;
-						}
-						edges[outIdx++] = Edge<Point3>{ edges[startIdx].myStart, edges[i].myEnd, EdgeType::SEGMENT_TRIANGLE };
-						edges[outIdx++] = Edge<Point3>{ edges[i].myEnd, edges[startIdx].myStart, EdgeType::SEGMENT_TRIANGLE };
-					}
-				}
-				});
-			edges.resize(atomicCounter.load());
-		}
-
-		locSortEdgesCCW<E>(edges);
+		locSortEdgesCCW(edges);
 	}
 
-	template<ExecutionPolicy E>
 	size_t CountVerticesInLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope)
 	{
 		if (std::holds_alternative<std::monostate>(aLowerEnvelope))
@@ -648,28 +616,23 @@ namespace SPGMT
 		}
 		else
 		{
+			// Sequential is already very fast, no parallelization needed
 			using EdgesList = std::vector<Edge<Point3>>;
 			CGAL_precondition(std::holds_alternative<EdgesList>(aLowerEnvelope));
 			const auto& edges = std::get<EdgesList>(aLowerEnvelope);
-
-			// Dummy upper bound
-			std::vector<Point3> vertices(edges.size() / 2);
-
-			BindExecutionPolicy<E>(hpx::transform, edges.begin(), edges.end(), vertices.begin(),
-				[](const auto& anEdge) { return anEdge.myStart; });
-
-			BindExecutionPolicy<E>(hpx::sort, vertices.begin(), vertices.end(), CGAL::Less<Point3, Point3>());
-
-			const auto uniqueEndIter =
-				BindExecutionPolicy<E>(hpx::unique, vertices.begin(), vertices.end(), CGAL::Equal_to<Point3, Point3>());
-
-			return static_cast<size_t>(std::distance(vertices.begin(), uniqueEndIter));
+			size_t verticesCount = 0, i = 0;
+			while (i < edges.size() && ++verticesCount)
+			{
+				while (++i < edges.size() && edges[i].myStart == edges[i - 1].myStart);
+			}
+			return verticesCount;
 		}
 	}
 
-	template<ExecutionPolicy E>
 	std::vector<size_t> GetLowerEnvelopePlanesIndices(const LowerEnvelope3d& aLowerEnvelope)
 	{
+		return std::vector<size_t>{};
+
 		if (std::holds_alternative<std::monostate>(aLowerEnvelope))
 		{
 			return std::vector<size_t>{};
@@ -684,44 +647,27 @@ namespace SPGMT
 		{
 			CGAL_precondition(std::holds_alternative<std::vector<Edge<Point3>>>(aLowerEnvelope));
 			const auto& edges = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
-			std::vector<size_t> indices(edges.size());
-			std::atomic<size_t> counter{ 0 };
-			BindExecutionPolicy<E>(hpx::for_loop, 0, edges.size(), [&](size_t i) {
-				if (edges[i].myType == EdgeType::LINE ||
-					edges[i].myType == EdgeType::HALF_EDGE_SF ||
-					edges[i].myType == EdgeType::HALF_EDGE_EF ||
-					edges[i].myType == EdgeType::SEGMENT)
+			constexpr auto edgeMask = (int)EdgeType::LINE | (int)EdgeType::HALF_EDGE_SF | (int)EdgeType::HALF_EDGE_EF | (int)EdgeType::SEGMENT;
+			std::vector<size_t> planesIndices;
+			planesIndices.reserve(edges.size());
+
+			for (auto i = 0; i < edges.size(); ++i)
+			{
+				if ((int)edges[i].myType & edgeMask)
 				{
 					CGAL_precondition(edges[i].myLowestLeftPlane > -1);
-					indices[counter.fetch_add(1, std::memory_order_relaxed)] = edges[i].myLowestLeftPlane;
+					planesIndices.emplace_back(edges[i].myLowestLeftPlane);
 				}
-				});
-			indices.resize(counter.load());
-			BindExecutionPolicy<E>(hpx::sort, indices.begin(), indices.end());
-			indices.erase(BindExecutionPolicy<E>(hpx::unique, indices.begin(), indices.end()), indices.end());
-			return indices;
+			}
+
+			planesIndices.reserve(planesIndices.size());
+
+			static tbb::affinity_partitioner ap;
+			tbb::parallel_sort(planesIndices.begin(), planesIndices.end());
+
+			planesIndices.erase(std::unique(planesIndices.begin(), planesIndices.end()), planesIndices.end());
+
+			return planesIndices;
 		}
 	}
-
-
-	// ------------------------------------------------
-	// Explicit instantiation for each execution policy
-	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::SEQ>(const std::vector<Plane>& somePlanes);
-	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::PAR>(const std::vector<Plane>& somePlanes);
-	template LowerEnvelope3d ComputeLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(const std::vector<Plane>& somePlanes);
-
-	// Explicit instantiation for each execution policy
-	template void TriangulateLowerEnvelope<ExecutionPolicy::SEQ>(LowerEnvelope3d& anOutLowerEnvelope);
-	template void TriangulateLowerEnvelope<ExecutionPolicy::PAR>(LowerEnvelope3d& anOutLowerEnvelope);
-	template void TriangulateLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(LowerEnvelope3d& anOutLowerEnvelope);
-
-	// Explicit instantiation for each execution policy
-	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::SEQ>(const LowerEnvelope3d& aLowerEnvelope);
-	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR>(const LowerEnvelope3d& aLowerEnvelope);
-	template size_t CountVerticesInLowerEnvelope<ExecutionPolicy::PAR_UNSEQ>(const LowerEnvelope3d& aLowerEnvelope);
-
-	// Explicit instantiation for each execution policy
-	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::SEQ>(const LowerEnvelope3d& aLowerEnvelope);
-	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::PAR>(const LowerEnvelope3d& aLowerEnvelope);
-	template std::vector<size_t> GetLowerEnvelopePlanesIndices<ExecutionPolicy::PAR_UNSEQ>(const LowerEnvelope3d& aLowerEnvelope);
 }

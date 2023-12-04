@@ -8,6 +8,10 @@
 #include <CGAL/Env_plane_traits_3.h>
 #include <CGAL/envelope_3.h>
 
+// mem test
+#include <CGAL/Compact_container.h>
+#include <CGAL/Concurrent_compact_container.h>
+
 // typedefs for defining the lower envelope
 typedef CGAL::Env_plane_traits_3<SPGMT::Kernel>          Traits_3;
 typedef Traits_3::Surface_3                              Surface_3;
@@ -28,6 +32,7 @@ namespace SPGMT
 
 		// TESTING
 		std::vector<Plane> RandomPlaneSamplingTest(const size_t aSamplesCount, const double aMinHeight = -100.f, const double aMaxHeight = 100.f);
+		//CGAL::Concurrent_compact_container<Plane, CGAL_ALLOCATOR(Plane)> RandomPlaneSamplingOPT(const int aSampleCount, const double aMinPlaneHeight = -100.f, const double aMaxPlaneHeight = 100.f);
 
 		std::vector<Point3> SampleTriplePlaneIntersectionPoints(const std::vector<Plane>& somePlanes, const int aSampleCount);
         std::vector<Point3> SamplePointsAlongPlaneIntersections(const std::vector<Plane>& somePlanes, const int aSampleCount);

@@ -6,7 +6,5 @@
 
 namespace SPGMT
 {
-	
 	LowerEnvelope3d ComputeLowerEnvelopeSmart(const std::vector<Plane>& somePlanes);
-
 }

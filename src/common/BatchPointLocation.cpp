@@ -4,191 +4,105 @@
 #include <vector>
 #include <functional>
 
+// just for debugging
+#include <iostream>
+#include <chrono>
+
+#include <CGAL/Compact_container.h>
+#include <CGAL/Concurrent_compact_container.h>
+
+#include <oneapi/tbb/info.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
+#include <oneapi/tbb/global_control.h>
+#include <oneapi/tbb/blocked_range2d.h>
+
+#include <oneapi/tbb/parallel_sort.h>
+
+#include <oneapi/tbb/task_scheduler_observer.h>
+
+#include <functional>
+#include <oneapi/tbb/task_arena.h>
+
+#include <oneapi/tbb/parallel_reduce.h>
+
+//#include <CGAL/hilbert_sort.h>
+
 namespace SPGMT
 {
 	namespace
 	{
-		template<ExecutionPolicy E = ExecutionPolicy::SEQ>
-		struct LineParallelLineVisitor
+		template<typename T, typename K>
+		void locGetSortedItemsByLine3(const std::vector<T>& someItems, const K& aLine, std::vector<size_t>& someOutItemsIndices)
 		{
-			constexpr static ExecutionPolicy GetExecutionPolicy()
+			struct P { size_t myIdx; FT myValue; };
+			std::vector<P> planes;
+			planes.reserve(someItems.size());
+			for (size_t i = 0; i < someItems.size(); ++i)
 			{
-				return E;
-			}
-
-			struct Data
-			{
-				FT myDistance;
-				size_t myIndex;
-			};
-			typedef Data payload_type;
-			typedef void result_type;
-			void operator()(const Point2& aPoint)
-			{
-				const FT zero{ 0 };
-				const Vec2 vecToPoint{ myLine.point(), aPoint };
-				const auto distanceSign = CGAL::scalar_product(vecToPoint, myLine.to_vector()) > zero ? 1.f : -1.f;
-
-				if (E == ExecutionPolicy::SEQ)
+				const auto& intersection = CGAL::intersection(someItems[i], aLine);
+				if (intersection)
 				{
-					myOutResult.emplace_back(Data{ distanceSign * vecToPoint.squared_length(), myPlaneIndex });
-				}
-				else
-				{
-					myOutResult[myPlaneIndex] = Data{ distanceSign * vecToPoint.squared_length(), myPlaneIndex };
+					const Point3* point = boost::get<Point3>(&*intersection);
+					CGAL_precondition(point != nullptr);
+					const Vec3 vec{ aLine.point(), *point };
+					if (CGAL::sign(CGAL::scalar_product(vec, aLine.to_vector())) == CGAL::Sign::POSITIVE)
+					{
+						planes.emplace_back(P{ i, vec.squared_length() });
+					}
+					else
+					{
+						planes.emplace_back(P{ i, -vec.squared_length() });
+					}
 				}
 			}
-			void operator()(const Line2& /**/)
-			{
-				CGAL_precondition(false);
-			}
 
-			const Line2& myLine;
-			const size_t myPlaneIndex;
-			std::vector<payload_type>& myOutResult;
-		};
-
-		template<ExecutionPolicy E = ExecutionPolicy::SEQ>
-		struct LinePlaneVisitor
-		{
-			constexpr static ExecutionPolicy GetExecutionPolicy()
-			{
-				return E;
-			}
-
-			struct Data
-			{
-				FT myDistance;
-				size_t myIndex;
-			};
-			typedef Data payload_type;
-			typedef void result_type;
-			void operator()(const Point3& aPoint)
-			{
-				const FT zero{ 0 };
-				const Vec3 vecToPoint{ myLine.point(), aPoint };
-				const auto distanceSign = CGAL::scalar_product(vecToPoint, myLine.to_vector()) > zero ? 1.f : -1.f;
-
-				if (E == ExecutionPolicy::SEQ)
-				{
-					myOutResult.emplace_back(Data{ distanceSign * vecToPoint.squared_length(), myPlaneIndex });
-				}
-				else
-				{
-					myOutResult[myPlaneIndex] = Data{ distanceSign * vecToPoint.squared_length(), myPlaneIndex };
-				}
-
-			}
-			void operator()(const Line3& /**/)
-			{
-				CGAL_precondition(false);
-			}
-
-			const Line3& myLine;
-			const size_t myPlaneIndex;
-			std::vector<payload_type>& myOutResult;
-		};
-
-		template <typename Strategy, typename T, typename K>
-		std::vector<size_t> locGetSortedItemsByIntersection(const std::vector<T>& someItems, const K& anotherItem)
-		{
-			const auto sort = [](const auto& aFirst, const auto& aSecond) {return aFirst.myDistance < aSecond.myDistance; };
-			const auto transform = [](const auto& aFirst) {return aFirst.myIndex; };
-			constexpr auto E = Strategy::GetExecutionPolicy();
-
-			auto items = Utils::FindIntersections<Strategy>(someItems, anotherItem);
-			BindExecutionPolicy<E>(hpx::sort, items.begin(), items.end(), sort);
-
-			std::vector<size_t> indices(items.size());
-			BindExecutionPolicy<E>(hpx::transform, items.begin(), items.end(), indices.begin(), transform);
-
-			return indices;
+			std::sort(planes.begin(), planes.end(), [](const auto& a, const auto& b) { return a.myValue < b.myValue; });
+			someOutItemsIndices.resize(planes.size());
+			std::transform(planes.begin(), planes.end(), someOutItemsIndices.begin(), [](const auto& a) { return a.myIdx; });
 		}
 
-		bool locHasVerticalLine(
-			const FT& aSlabX,
-			const std::vector<Line2>& someLines,
-			const size_t aNonVerticalLinesCount)
+		template<typename T, typename K>
+		void locGetSortedItemsByLine2(const std::vector<T>& someItems, const K& aLine, std::vector<size_t>& someOutItemsIndices)
 		{
-			// The number of vertical lines is, on average, very rare and so it makes sense to run this code sequentially for the sake of efficiency
-			return hpx::find_if(hpx::execution::seq, someLines.begin() + aNonVerticalLinesCount, someLines.end(), [&](const auto& aVerticalLine) {
-				return aVerticalLine.point().x() == aSlabX; }) != someLines.end();
-		}
+			struct P { size_t myIdx; FT myValue; };
+			std::vector<P> planes;
+			planes.reserve(someItems.size());
+			for (size_t i = 0; i < someItems.size(); ++i)
+			{
+				const auto& intersection = CGAL::intersection(someItems[i], aLine);
+				if (intersection)
+				{
+					const Point2* point = boost::get<Point2>(&*intersection);
+					CGAL_precondition(point != nullptr);
+					const Vec2 vec{ aLine.point(), *point };
+					if (CGAL::sign(CGAL::scalar_product(vec, aLine.to_vector())) == CGAL::Sign::POSITIVE)
+					{
+						planes.emplace_back(P{ i, vec.squared_length() });
+					}
+					else
+					{
+						planes.emplace_back(P{ i, -vec.squared_length() });
+					}
+				}
+			}
 
-		template<ExecutionPolicy E>
-		std::vector<Line2> locGetSortedLines(
-			const FT& aSlabX,
-			const std::vector<Line2>& someLines,
-			const size_t aNonVerticalLinesCount)
-		{
-			std::vector<Line2> sortedLines(someLines.begin(), someLines.begin() + aNonVerticalLinesCount);
-			BindExecutionPolicy<E>(hpx::sort, sortedLines.begin(), sortedLines.end(),
-				[&](const auto& a, const auto& b) {
-					const auto& ya = a.y_at_x(aSlabX);
-					const auto& yb = b.y_at_x(aSlabX);
-					return ya < yb || (ya == yb && CGAL::compare_slope(a, b) == CGAL::Comparison_result::SMALLER);
-				});
-
-			return sortedLines;
+			std::sort(planes.begin(), planes.end(), [](const auto& a, const auto& b) { return a.myValue < b.myValue; });
+			someOutItemsIndices.resize(planes.size());
+			std::transform(planes.begin(), planes.end(), someOutItemsIndices.begin(), [](const auto& a) { return a.myIdx; });
 		}
 
 		struct BatchPointLocationData
 		{
-			std::vector<std::tuple<FT, std::vector<FT>>> mySlabs;
+			std::vector<Point2> myVertices;
+			//std::vector</*std::tuple<FT, std::vector<FT>>*/Slab> mySlabs;
 			std::vector<Line2> myLines;
 			size_t myNonVerticalLinesCount;
 			std::optional<BatchPointResult> myBatchPointResultOpt;
 		};
 
-		template<ExecutionPolicy E, typename T, typename F>
-		void locFillRequiredCacheEntries(
-			const std::vector<Plane>& somePlanes,
-			const std::vector<T>& somePoints,
-			const size_t aStartIdx,
-			const size_t anEndIdx,
-			const F& anAreaIndexGetter,
-			std::vector<size_t>& someOutAreaIndices,
-			std::unordered_map<size_t, std::vector<size_t>>& anOutCache)
-		{
-			const auto verticesCount = anEndIdx - aStartIdx;
-			someOutAreaIndices.resize(verticesCount);
-			BindExecutionPolicy<E>(hpx::for_loop, 0, verticesCount, [&](size_t aPointIdx) {
-				someOutAreaIndices[aPointIdx] = anAreaIndexGetter(aStartIdx + aPointIdx);
-				});
-
-			std::vector<std::tuple<size_t, size_t>> uniqueAreaIndices(someOutAreaIndices.size());
-			BindExecutionPolicy<E>(hpx::for_loop, 0, someOutAreaIndices.size(),
-				[&](size_t aPointIdx) { uniqueAreaIndices[aPointIdx] = std::make_tuple(someOutAreaIndices[aPointIdx], aStartIdx + aPointIdx); });
-
-			BindExecutionPolicy<E>(hpx::sort, uniqueAreaIndices.begin(), uniqueAreaIndices.end(),
-				[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-			const auto itemsEndIter = BindExecutionPolicy<E>(hpx::unique, uniqueAreaIndices.begin(), uniqueAreaIndices.end(),
-				[](const auto& a, const auto& b) { return std::get<0>(a) == std::get<0>(b); });
-			uniqueAreaIndices.erase(itemsEndIter, uniqueAreaIndices.end());
-
-			// Fill cache (KEEP THIS LOOP SEQUENTIAL)
-			hpx::for_loop(hpx::execution::seq, uniqueAreaIndices.begin(), uniqueAreaIndices.end(),
-				[&](const auto& anAreaTuple) { anOutCache.insert(std::make_pair(std::get<0>(*anAreaTuple), std::vector<size_t>{})); });
-
-			BindExecutionPolicy<E>(hpx::for_loop, uniqueAreaIndices.begin(), uniqueAreaIndices.end(),
-				[&](const auto& anAreaTuple) {
-					if constexpr (std::is_same<T, Point3>::value)
-					{
-						anOutCache.find(std::get<0>(*anAreaTuple))->second =
-							locGetSortedItemsByIntersection<LinePlaneVisitor<ExecutionPolicy::SEQ>>(somePlanes,
-								Line3{ somePoints[std::get<1>(*anAreaTuple)], Vec3{0,0,1} });
-					}
-					else
-					{
-						anOutCache.find(std::get<0>(*anAreaTuple))->second =
-							locGetSortedItemsByIntersection<LinePlaneVisitor<ExecutionPolicy::SEQ>>(somePlanes,
-								Line3{ std::get<0>(somePoints[std::get<1>(*anAreaTuple)]), Vec3{0,0,1} });
-					}
-				});
-		}
-
 		template<typename K, typename F>
-		size_t locGeometricBinarySearch(
+		int locGeometricBinarySearch(
 			const K& aPoint,
 			const size_t anItemsCount,
 			F&& anItemGetter)
@@ -237,57 +151,85 @@ namespace SPGMT
 
 			// MUST NEVER REACH THIS AREA
 			CGAL_precondition(false);
-			return SIZE_MAX;
+			return -1;
 		}
 
-		enum class SlabSearchType
+		int locSlabBinarySearch(
+			const Point2& aPoint,
+			const std::vector<Point2>& someVertices)
 		{
-			INTERNAL, EXTERNAL
-		};
-
-		template<SlabSearchType T, typename F>
-		std::tuple<size_t, bool> locSlabBinarySearch(
-			const FT& aValue,
-			const size_t anItemsCount,
-			F&& anItemGetter)
-		{
-			CGAL_precondition(anItemsCount > 0);
-			int left = 0, right = anItemsCount;
+			int left = 0, right = someVertices.size();
+			int mid;
 			while (left < right)
 			{
-				const size_t mid = left + (right - left) / 2;
-				const auto& item = anItemGetter(mid);
-				if (aValue < item)
+				mid = left + (right - left) / 2;
+				const auto& item = someVertices[mid];
+				if (aPoint.x() < item.x())
 				{
-					if (mid == 0 || aValue > anItemGetter(mid - 1))
+					if (mid == 0 || aPoint.x() > someVertices[mid - 1].x())
 					{
-						if constexpr (T == SlabSearchType::INTERNAL)
-						{
-							return std::make_tuple(mid, false);
-						}
-						else
-						{
-							return std::make_tuple(mid - 1, false);
-						}
+						mid = mid - 1;
+						break;
 					}
 					else
 					{
 						right = mid;
 					}
 				}
-				else if (aValue > item)
+				else if (aPoint.x() > item.x())
 				{
-					if (mid == anItemsCount - 1 ||
-						aValue < anItemGetter(mid + 1))
+					if (mid == someVertices.size() - 1 ||
+						aPoint.x() < someVertices[mid + 1].x())
 					{
-						if constexpr (T == SlabSearchType::INTERNAL)
-						{
-							return std::make_tuple(mid + 1, false);
-						}
-						else
-						{
-							return std::make_tuple(mid, false);
-						}
+						break;
+					}
+					else
+					{
+						left = mid + 1;
+					}
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			// Go to first slab vertex
+			while (--mid > 0 && someVertices[mid].x() == someVertices[mid + 1].x());
+			return mid + 1;
+
+			// It should never reach this area
+			CGAL_postcondition(false);
+			return -1;
+		}
+
+		std::tuple<size_t, bool> locTestBinarySearch(
+			const Point2& aPoint,
+			const std::vector<Point2>& someVertices)
+		{
+			CGAL_precondition(someVertices.size() > 0);
+			int left = 0, right = someVertices.size();
+			while (left < right)
+			{
+				const size_t mid = left + (right - left) / 2;
+				const auto& item = someVertices[mid];
+				if (aPoint.y() < item.y())
+				{
+					if (mid == 0 || aPoint.y() > someVertices[mid - 1].y())
+					{
+						return std::make_tuple(mid, false);
+					}
+					else
+					{
+						right = mid;
+					}
+				}
+				else if (aPoint.y() > item.y())
+				{
+					if (mid == someVertices.size() - 1 ||
+						aPoint.y() < someVertices[mid + 1].y())
+					{
+						return std::make_tuple(mid + 1, false);
 					}
 					else
 					{
@@ -305,262 +247,247 @@ namespace SPGMT
 			return std::make_tuple(SIZE_MAX, false);
 		}
 
-		template<ExecutionPolicy E>
 		void locComputeData(
 			const std::vector<Plane>& somePlanes,
 			const std::vector<Point3>& somePoints,
 			BatchPointLocationData& anOutData)
 		{
-			const static Point3 zero{ 0,0,0 };
-
-			std::vector<std::tuple<bool, Point2, Point2>> lines;
-
-			const auto PlanePlaneSeq = [&](const size_t aFirstPlaneIdx, const size_t aSecondPlaneIdx)
+			// Start lines computation
 			{
-				const auto intersection = CGAL::intersection(somePlanes[aFirstPlaneIdx], somePlanes[aSecondPlaneIdx]);
-				if (intersection)
+				using LW = std::tuple<bool, Point2, Point2>;
+				tbb::enumerable_thread_specific<std::vector<LW>> data;
+				tbb::enumerable_thread_specific<size_t> count{ 0 };
+
 				{
-					const Line3* line = boost::get<Line3>(&*intersection);
-					CGAL_precondition(line != nullptr);
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_for(tbb::blocked_range2d<int, int>(0, somePlanes.size(), 0, somePlanes.size()),
+						[&](tbb::blocked_range2d<int, int>& r) {
+							static const Point3 zero{ 0,0,0 };
+							if (r.rows().end() > r.cols().begin())
+							{
+								for (int i = r.rows().begin(); i < r.rows().end(); ++i)
+								{
+									for (int k = r.cols().begin(); k < r.cols().end(); ++k)
+									{
+										if (i <= k) continue;
+										const auto intersection = CGAL::intersection(somePlanes[k], somePlanes[i]);
+										if (intersection)
+										{
+											const Line3* line = boost::get<Line3>(&*intersection);
+											CGAL_precondition(line != nullptr);
 
-					auto start = line->projection(zero);
-					auto end = start + line->to_vector() * FT(1000.f);
-					if (end < start) std::swap(start, end);
+											auto start = line->projection(zero);
+											auto end = start + line->to_vector() * FT(1000.f);
+											if (end < start) std::swap(start, end);
 
-					lines.emplace_back(std::make_tuple(
-						start.y() == end.y(), Point2{ start.x(), start.y() }, Point2{ end.x(), end.y() }));
-				}
-			};
-			const auto PlanePlanePar = [&](const size_t aFirstPlaneIdx, const size_t aSecondPlaneIdx, std::atomic<size_t>& anOutCounter)
-			{
-				const auto intersection = CGAL::intersection(somePlanes[aFirstPlaneIdx], somePlanes[aSecondPlaneIdx]);
-				if (intersection)
-				{
-					const Line3* line = boost::get<Line3>(&*intersection);
-					CGAL_precondition(line != nullptr);
-
-					auto start = line->projection(zero);
-					auto end = start + line->to_vector() * FT(1000.f);
-					if (end < start) std::swap(start, end);
-
-					const auto outIdx = anOutCounter.fetch_add(1, std::memory_order_relaxed);
-
-					lines[outIdx] = std::make_tuple(
-						start.y() == end.y(),
-						Point2{ start.x(), start.y() },
-						Point2{ end.x(), end.y() });
-				}
-			};
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				hpx::for_loop(hpx::execution::seq, 0, somePlanes.size(), [&](size_t aPlaneIdx) {
-					hpx::for_loop(hpx::execution::seq, aPlaneIdx + 1, somePlanes.size(), [&](size_t anotherPlaneIdx) {
-						PlanePlaneSeq(aPlaneIdx, anotherPlaneIdx);
+											data.local().emplace_back(
+												std::make_tuple(start.y() == end.y(), Point2{ start.x(), start.y() }, Point2{ end.x(), end.y() }));
+											++count.local();
+										}
+									}
+								}
+							}
 						});
+				}
+
+				std::vector<LW> lines;
+				lines.resize(count.combine(std::plus<size_t>()));
+				size_t copyStartIdx = 0;
+				for (auto it = data.begin(); it != data.end(); copyStartIdx += it->size(), ++it)
+				{
+					std::copy(it->begin(), it->end(), lines.begin() + copyStartIdx);
+				}
+
+				{
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_sort(lines.begin(), lines.end());
+				}
+
+				// Sequential copy unique
+				const auto& newEnd = std::unique(lines.begin(), lines.end());
+				anOutData.myLines.reserve(std::distance(lines.begin(), newEnd));
+				for (auto it = lines.begin(); it != newEnd; ++it)
+				{
+					anOutData.myLines.emplace_back(Line2{ std::get<1>(*it), std::get<2>(*it) });
+				}
+
+				anOutData.myNonVerticalLinesCount = std::count_if(lines.begin(), newEnd, [](const auto& aLine) {
+					return !std::get<0>(aLine);
 					});
 			}
-			else
+			// End lines computation
+
+			// TOADD: Edge case parallel lines
 			{
-				std::atomic<size_t> counter{ 0 };
-				const auto maxLinesCount = somePlanes.size() * (somePlanes.size() - 1) / 2;
-				lines.resize(maxLinesCount);
-
-				BindExecutionPolicy<E>(hpx::for_loop, 0, somePlanes.size(), [&](size_t aPlaneIdx) {
-					BindExecutionPolicy<E>(hpx::for_loop, aPlaneIdx + 1, somePlanes.size(), [&](size_t anotherPlaneIdx) {
-						PlanePlanePar(aPlaneIdx, anotherPlaneIdx, counter);
-						});
+				const auto& refDir = anOutData.myLines[0].direction();
+				const auto areParallel = std::all_of(anOutData.myLines.begin(), anOutData.myLines.end(), [&](const auto& aLine) {
+					return refDir == aLine.direction() || refDir == -aLine.direction();
 					});
+				if (areParallel)
+				{
+					BatchPointResult result;
 
-				lines.resize(counter.fetch_xor(counter.load()));
+					const auto& line = anOutData.myLines[0].perpendicular(anOutData.myLines[0].point());
+
+					std::vector<size_t> sortedLineindices;
+					locGetSortedItemsByLine2(anOutData.myLines, line, sortedLineindices);
+
+					// Start from here <--
+
+					struct S { Point3 myQueryPoint; size_t mySlabIdx; };
+					std::vector<S> slabs;
+					slabs.resize(somePoints.size());
+
+					{
+						static tbb::affinity_partitioner ap;
+						tbb::parallel_for(tbb::blocked_range<int>(0, somePoints.size()),
+							[&](tbb::blocked_range<int>& r) {
+								std::vector<S> local;
+								for (auto i = r.begin(); i < r.end(); ++i)
+								{
+									const Point2 projectedPoint{ somePoints[i].x(), somePoints[i].y() };
+									const auto lineIdx = locGeometricBinarySearch(projectedPoint, sortedLineindices.size(),
+										[&](size_t k) { return anOutData.myLines[sortedLineindices[k]]; });
+
+									const auto isPointAlongLine = lineIdx < sortedLineindices.size() &&
+										anOutData.myLines[sortedLineindices[lineIdx]].has_on(projectedPoint);
+									const auto finalLineIdx = isPointAlongLine ? lineIdx : (lineIdx + anOutData.myLines.size());
+									local.emplace_back(S{ somePoints[i], finalLineIdx });
+								}
+								std::copy(local.begin(), local.end(), slabs.begin() + r.begin());
+							});
+					}
+
+					// Sequential Slab filtering
+					{
+						std::vector<S> cp(slabs);
+						std::sort(cp.begin(), cp.end(), [](const auto& a, const auto& b) {
+							return a.mySlabIdx < b.mySlabIdx;
+							});
+						const auto newEnd = std::unique(cp.begin(), cp.end(), [](const auto& a, const auto& b) {
+							return a.mySlabIdx == b.mySlabIdx;
+							});
+						cp.erase(newEnd, cp.end());
+
+						result.mySortedPlanesCache.insert(std::make_pair(0, BatchPointResult::SlabCache{}));
+						for (const auto slab : cp)
+						{
+							result.mySortedPlanesCache.at(0).insert(std::make_pair(slab.mySlabIdx, std::vector<size_t>{}));
+						}
+
+						static tbb::affinity_partitioner ap;
+						tbb::parallel_for(tbb::blocked_range<int>(0, cp.size()),
+							[&](tbb::blocked_range<int>& r) {
+								for (auto i = r.begin(); i < r.end(); ++i)
+								{
+									locGetSortedItemsByLine3(somePlanes, Line3{ cp[i].myQueryPoint, Vec3{0,0,1} },
+										result.mySortedPlanesCache.at(0).find(cp[i].mySlabIdx)->second);
+								}
+							});
+					}
+
+
+					result.myRangeWrappers.resize(somePoints.size());
+
+					{
+						static tbb::affinity_partitioner ap;
+						tbb::parallel_for(tbb::blocked_range<int>(0, somePoints.size()),
+							[&](tbb::blocked_range<int>& r) {
+								for (auto i = r.begin(); i < r.end(); ++i)
+								{
+									const auto& sortedPlanesIndices = result.mySortedPlanesCache[0].at(slabs[i].mySlabIdx);
+									const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[i], sortedPlanesIndices.size(),
+										[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
+									using R = BatchPointResult::RangeWrapper;
+									result.myRangeWrappers[i] = R{ Range{firstUpperPlaneIdx, somePlanes.size()}, 0, slabs[i].mySlabIdx };
+								}
+							});
+					}
+
+					anOutData.myBatchPointResultOpt = result;
+					return;
+				}
 			}
 
-			BindExecutionPolicy<E>(hpx::sort, lines.begin(), lines.end());
-			const auto linesEndIter = BindExecutionPolicy<E>(hpx::unique, lines.begin(), lines.end());
-			lines.erase(linesEndIter, lines.end());
-
-			anOutData.myNonVerticalLinesCount = BindExecutionPolicy<E>(hpx::count_if, lines.begin(), lines.end(),
-				[](const auto& a) {return !std::get<0>(a); });
-
-			anOutData.myLines.resize(lines.size());
-			BindExecutionPolicy<E>(hpx::transform, lines.begin(), lines.end(), anOutData.myLines.begin(),
-				[](const auto& a) { return Line2{ std::get<1>(a), std::get<2>(a) }; });
-
-			// If all the lines are parallel then compute result and return early
-			const auto areLinesParallel = Utils::AreItemsParallel<E>(anOutData.myLines,
-				[](const auto& aLine) { return aLine.direction(); });
-
-			if (areLinesParallel)
+			// Start vertices computation
 			{
-				BatchPointResult result;
+				anOutData.myVertices.resize(anOutData.myLines.size() * (anOutData.myLines.size() - 1));
 
-				const auto line = anOutData.myLines[0].perpendicular(anOutData.myLines[0].point());
-				const auto& sortedLinesIndices =
-					locGetSortedItemsByIntersection<LineParallelLineVisitor<E>>(anOutData.myLines, line);
-
-				const auto GetAreaIdx = [&](size_t aPointIdx)
+				class t : public tbb::task_scheduler_observer
 				{
-					const Point2 projectedPoint{ somePoints[aPointIdx].x(), somePoints[aPointIdx].y() };
-					const size_t firstUpperLineIdx = locGeometricBinarySearch(projectedPoint, sortedLinesIndices.size(), [&](size_t i) {
-						return anOutData.myLines[sortedLinesIndices[i]];
-						});
-					const auto isPointAlongLine = firstUpperLineIdx < sortedLinesIndices.size() &&
-						anOutData.myLines[sortedLinesIndices[firstUpperLineIdx]].has_on(projectedPoint);
 
-					if (isPointAlongLine)
-					{
-						return firstUpperLineIdx;
+				public:
+					tbb::enumerable_thread_specific<std::vector<Point2>> data;
+
+					t(std::vector<Point2>& abc, size_t& finalCount)
+						: tbb::task_scheduler_observer( /*local=*/ /*true*/), out(abc), fc(finalCount) {
+						observe(true); // activate the observer
 					}
-					else
-					{
-						return firstUpperLineIdx + anOutData.myLines.size();
+					~t() {
+						observe(false); // deactivate the observer
+
+						for (auto& t : data) {
+							fc += t.size();
+						}
 					}
+					/*override*/ void on_scheduler_entry(bool worker) {
+						CGAL_precondition(data.local().empty());
+					}
+					/*override*/ void on_scheduler_exit(bool worker) {
+						const int start = c.fetch_add(data.local().size());
+						std::copy(data.local().begin(), data.local().end(), out.begin() + start);
+					}
+					size_t& fc;
+					std::atomic<size_t> c{ 0 };
+					std::vector<Point2>& out;
+
 				};
 
-				std::vector<size_t> areaIndices;
-				result.mySortedPlanesCache.resize(1);
+				size_t finalSize{ 0 };
 
-				locFillRequiredCacheEntries<E>(somePlanes, somePoints, 0, somePoints.size(), GetAreaIdx, areaIndices, result.mySortedPlanesCache[0]);
-
-				result.myRangeWrappers.resize(somePoints.size());
-				BindExecutionPolicy<E>(hpx::for_loop, 0, somePoints.size(), [&](size_t aPointIdx) {
-					const auto cacheIdx = areaIndices[aPointIdx];
-					const auto& sortedPlanesIndices = result.mySortedPlanesCache[0].at(cacheIdx);
-					const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[aPointIdx], sortedPlanesIndices.size(),
-						[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
-					using Res = BatchPointResult::RangeWrapper;
-					result.myRangeWrappers[aPointIdx] = Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, 0, cacheIdx };
-					});
-
-				anOutData.myBatchPointResultOpt = result;
-				return;
-			}
-
-			std::vector<Point2> vertices;
-
-			const auto LineLineSeq = [&](size_t aFirstLineIdx, size_t aSecondLineIdx)
-			{
-				const auto intersection = CGAL::intersection(anOutData.myLines[aFirstLineIdx], anOutData.myLines[aSecondLineIdx]);
-				if (intersection)
 				{
-					const Point2* point = boost::get<Point2>(&*intersection);
-					CGAL_precondition(point != nullptr);
-					vertices.emplace_back(*point);
-				}
-			};
-			const auto LineLinePar = [&](size_t aFirstLineIdx, size_t aSecondLineIdx, std::atomic<size_t>& anOutCounter)
-			{
-				const auto intersection = CGAL::intersection(anOutData.myLines[aFirstLineIdx], anOutData.myLines[aSecondLineIdx]);
-				if (intersection)
-				{
-					const Point2* point = boost::get<Point2>(&*intersection);
-					CGAL_precondition(point != nullptr);
-					const auto outIdx = anOutCounter.fetch_add(1, std::memory_order_relaxed);
-					vertices[outIdx] = *point;
-				}
-			};
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				hpx::for_loop(hpx::execution::seq, 0, anOutData.myLines.size(), [&](size_t aLineIdx) {
-					hpx::for_loop(hpx::execution::seq, aLineIdx + 1, anOutData.myLines.size(), [&](size_t anotherLineIdx) {
-						LineLineSeq(aLineIdx, anotherLineIdx);
-						});
-					});
-			}
-			else
-			{
-				const auto maxVerticesCount = anOutData.myLines.size() * (anOutData.myLines.size() - 1) / 2;
-				vertices.resize(maxVerticesCount);
-				std::atomic<size_t> counter{ 0 };
-				BindExecutionPolicy<E>(hpx::for_loop, 0, anOutData.myLines.size(), [&](size_t aLineIdx) {
-					BindExecutionPolicy<E>(hpx::for_loop, aLineIdx + 1, anOutData.myLines.size(), [&](size_t anotherLineIdx) {
-						LineLinePar(aLineIdx, anotherLineIdx, counter);
-						});
-					});
-				vertices.resize(counter.load());
-			}
-
-			BindExecutionPolicy<E>(hpx::sort, vertices.begin(), vertices.end(), CGAL::Less<Point2, Point2>());
-
-			if constexpr (E == ExecutionPolicy::SEQ)
-			{
-				std::vector<FT> uniqueYValues(1, vertices[0].y());
-				FT lastSlabX = vertices[0].x();
-
-				hpx::for_loop(hpx::execution::seq, 1, vertices.size(), [&](size_t aVertexIdx) {
-					if (vertices[aVertexIdx].x() == lastSlabX)
-					{
-						if (vertices[aVertexIdx].y() != uniqueYValues.back())
-						{
-							uniqueYValues.emplace_back(vertices[aVertexIdx].y());
-						}
-					}
-					else
-					{
-						anOutData.mySlabs.emplace_back(std::make_tuple(lastSlabX, uniqueYValues));
-
-						lastSlabX = vertices[aVertexIdx].x();
-						uniqueYValues.clear();
-						uniqueYValues.emplace_back(vertices[aVertexIdx].y());
-					}
-					});
-
-				anOutData.mySlabs.emplace_back(std::make_tuple(lastSlabX, uniqueYValues));
-			}
-			else
-			{
-				std::atomic<size_t> counter{ 0 };
-				anOutData.mySlabs.resize(vertices.size());
-
-				BindExecutionPolicy<E>(hpx::for_loop, 0, vertices.size(), [&](size_t aVertexIdx) {
-					const auto& slabX = vertices[aVertexIdx].x();
-					if (aVertexIdx == 0 ||
-						slabX > vertices[aVertexIdx - 1].x())
-					{
-						std::vector<FT> uniqueYValues(1, vertices[aVertexIdx].y());
-
-						for (auto i = aVertexIdx + 1; i < vertices.size() && slabX == vertices[i].x(); ++i)
-						{
-							if (vertices[i].y() != uniqueYValues.back())
+					t tso(anOutData.myVertices, finalSize);
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_for(tbb::blocked_range2d<int, int>(0, anOutData.myLines.size(), 0, anOutData.myLines.size()),
+						[&](tbb::blocked_range2d<int, int>& r) {
+							if (r.rows().end() > r.cols().begin())
 							{
-								uniqueYValues.emplace_back(vertices[i].y());
+								for (int i = r.rows().begin(); i < r.rows().end(); ++i)
+								{
+									for (int k = r.cols().begin(); k < r.cols().end(); ++k)
+									{
+										if (i <= k) continue;
+										const auto intersection = CGAL::intersection(anOutData.myLines[k], anOutData.myLines[i]);
+										if (intersection)
+										{
+											const Point2* point = boost::get<Point2>(&*intersection);
+											CGAL_precondition(point != nullptr);
+											tso.data.local().emplace_back(*point);
+										}
+									}
+								}
 							}
-						}
 
-						anOutData.mySlabs[counter.fetch_add(1, std::memory_order_relaxed)] = std::make_tuple(slabX, uniqueYValues);
-					}
-					});
+						});
 
-				anOutData.mySlabs.resize(counter.load());
+					const int start = tso.c.fetch_add(tso.data.local().size());
+					std::copy(tso.data.local().begin(), tso.data.local().end(), anOutData.myVertices.begin() + start);
+				}
 
-				BindExecutionPolicy<E>(hpx::sort, anOutData.mySlabs.begin(), anOutData.mySlabs.end(),
-					[](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+				anOutData.myVertices.resize(finalSize);
+				const auto& extremes = std::minmax_element(somePoints.begin(), somePoints.end());
+				anOutData.myVertices.emplace_back(Point2{ extremes.first->x(), extremes.first->y() });
+				anOutData.myVertices.emplace_back(Point2{ extremes.second->x(), extremes.second->y() });
+
+				{
+					static tbb::affinity_partitioner ap;
+					tbb::parallel_sort(anOutData.myVertices.begin(), anOutData.myVertices.end(), CGAL::Less<Point2, Point2>());
+				}
 			}
-
-			const auto minMaxItems =
-				BindExecutionPolicy<E>(hpx::minmax_element, somePoints.begin(), somePoints.end(), CGAL::Less<Point3, Point3>());
-
-			// Maybe add 2 fake boundaries
-			static const FT offset = 1000.f;
-
-			if (minMaxItems.min->x() < std::get<0>(anOutData.mySlabs[0]))
-			{
-				std::vector<FT> uniqueY(1, minMaxItems.min->y());
-				const auto& startEntry = std::make_tuple(minMaxItems.min->x() - offset, uniqueY);
-				anOutData.mySlabs.insert(anOutData.mySlabs.begin(), startEntry);
-			}
-
-			if (minMaxItems.max->x() >= std::get<0>(anOutData.mySlabs.back()))
-			{
-				std::vector<FT> uniqueY(1, minMaxItems.max->y());
-				const auto& endEntry = std::make_tuple(minMaxItems.max->x() + offset, uniqueY);
-				anOutData.mySlabs.emplace_back(endEntry);
-			}
+			// Done vertices computation
 		}
 	}
 
-	template<ExecutionPolicy E>
 	BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints)
 	{
 		if (somePlanes.empty() || somePoints.empty())
@@ -569,201 +496,262 @@ namespace SPGMT
 		}
 
 		// Requirements check (TEMPORARY DISABLED)
-		//CGAL_precondition(Utils::AreItemsUnique(somePlanes));
+		// CGAL_precondition(Utils::AreItemsUnique(somePlanes));
 		// CGAL_precondition(Utils::ArePlanesNonVertical(somePlanes));
 		// CGAL_precondition(Utils::ArePlanesUniformlyOriented(somePlanes));
 
 		// 1st edge case: single or parallel planes
-		const auto arePlanesParallel = Utils::AreItemsParallel<E>(somePlanes,
-			[](const Plane& aPlane) { return aPlane.orthogonal_direction(); });
-
-		if (arePlanesParallel)
 		{
-			BatchPointResult result;
-
-			const auto line = somePlanes[0].perpendicular_line(somePlanes[0].point());
-			const auto& sortedPlanesIndices =
-				locGetSortedItemsByIntersection<LinePlaneVisitor<E>>(somePlanes, line);
-
-			result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
-			result.mySortedPlanesCache[0].insert(std::make_pair(0, sortedPlanesIndices));
-			result.myRangeWrappers.resize(somePoints.size());
-
-			hpx::for_loop(hpx::execution::par_unseq, 0, somePoints.size(), [&](size_t aPointIdx) {
-				const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[aPointIdx], sortedPlanesIndices.size(),
-				[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
-			result.myRangeWrappers[aPointIdx] = { Range{firstUpperPlaneIdx, somePlanes.size()}, 0, 0 };
+			const auto& refDir = somePlanes[0].orthogonal_direction();
+			const auto arePlanesParallel = std::all_of(somePlanes.begin(), somePlanes.end(), [&](const auto& aPlane) {
+				return refDir == aPlane.orthogonal_direction() || refDir == -aPlane.orthogonal_direction();
 				});
+			if (arePlanesParallel)
+			{
+				BatchPointResult result;
+				const auto line = somePlanes[0].perpendicular_line(somePlanes[0].point());
 
-			return result;
+				result.mySortedPlanesCache.insert(std::make_pair(0, BatchPointResult::SlabCache{}));
+				auto& sortedPlanesIndices = result.mySortedPlanesCache.at(0).insert(std::make_pair(0, std::vector<size_t> {})).first->second;
+				locGetSortedItemsByLine3(somePlanes, line, sortedPlanesIndices);
+				result.myRangeWrappers.resize(somePoints.size());
+
+				tbb::parallel_for(tbb::blocked_range<int>(0, somePoints.size()), [&](tbb::blocked_range<int>& r) {
+					using RW = BatchPointResult::RangeWrapper;
+					std::vector<RW> local;
+					for (auto i = r.begin(); i < r.end(); ++i)
+					{
+						const auto firstUpperPlaneIdx = locGeometricBinarySearch(somePoints[i], sortedPlanesIndices.size(),
+							[&](size_t k) { return somePlanes[sortedPlanesIndices[k]]; });
+						local.emplace_back(RW{ Range{firstUpperPlaneIdx, somePlanes.size()}, 0, 0 });
+					}
+					std::copy(local.begin(), local.end(), result.myRangeWrappers.begin() + r.begin());
+					});
+				return result;
+			}
 		}
 
 		BatchPointLocationData data;
 
-		locComputeData<E>(somePlanes, somePoints, data);
+		locComputeData(somePlanes, somePoints, data);
 
 		if (data.myBatchPointResultOpt.has_value())
 		{
 			return data.myBatchPointResultOpt.value();
 		}
 
+		//std::cout << "START" << std::endl;
+
 		BatchPointResult result;
+		result.myRangeWrappers.resize(somePoints.size());
 
-		std::vector<std::tuple<Point3, size_t, size_t>> queryPoints(somePoints.size());
+		//std::cout << "START slabs lookup" << std::endl;
 
-		BindExecutionPolicy<E>(hpx::for_loop, 0, somePoints.size(),
-			[&](size_t aPointIdx) { queryPoints[aPointIdx] = std::make_tuple(somePoints[aPointIdx], aPointIdx, 0); });
+		using P = std::tuple<Point3, int, int>;
+		std::vector<P> queryPoints;
+		queryPoints.resize(somePoints.size());
 
-		BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end());
-
-		if constexpr (E == ExecutionPolicy::SEQ)
+		// Find slab index for each query point
 		{
-			const Point2 projectedPoint{ std::get<0>(queryPoints[0]).x(), std::get<0>(queryPoints[0]).y() };
-			const auto startSlabIdx = std::get<0>(locSlabBinarySearch<SlabSearchType::EXTERNAL>(projectedPoint.x(), data.mySlabs.size(),
-				[&](size_t i) { return std::get<0>(data.mySlabs[i]); }));
-			for (size_t i = startSlabIdx, k = 0; i < data.mySlabs.size() - 1 && k < queryPoints.size(); ++i)
-			{
-				while (k < queryPoints.size() && std::get<0>(queryPoints[k]).x() < std::get<0>(data.mySlabs[i + 1]))
+			tbb::enumerable_thread_specific<std::vector<P>> local;
+			static tbb::affinity_partitioner ap;
+			tbb::parallel_for(tbb::blocked_range<int>(0, somePoints.size()), [&](tbb::blocked_range<int>& r) {
+				for (auto i = r.begin(); i < r.end(); ++i)
 				{
-					std::get<2>(queryPoints[k++]) = i;
+					const Point2 projectedPoint{ somePoints[i].x(), somePoints[i].y() };
+					local.local().emplace_back(std::make_tuple(somePoints[i], locSlabBinarySearch(projectedPoint, data.myVertices), i));
 				}
+				});
+
+			// Sequential copy (Potential optimization)
+			size_t startIdx = 0;
+			for (auto it = local.begin(); it != local.end(); startIdx += it->size(), ++it)
+			{
+				std::copy(it->begin(), it->end(), queryPoints.begin() + startIdx);
 			}
 		}
-		else
+		// End slab lookup
+		//std::cout << "DONE slabs lookup" << std::endl;
+
+		//std::cout << "START query point sort" << std::endl;
 		{
-			std::atomic<size_t> counter{ 0 };
+			static tbb::affinity_partitioner ap;
+			tbb::parallel_sort(queryPoints.begin(), queryPoints.end(),
+				[](const auto& a, const auto& b) {return std::get<1>(a) < std::get<1>(b); });
+		}
+		//std::cout << "DONE query point sort" << std::endl;
 
-			const auto runningThreadsCount = hpx::resource::get_num_threads();
-			const auto chunkSize = static_cast<size_t>(std::ceil(queryPoints.size() / (float)runningThreadsCount));
+		// Find result
+		// 1. Find lines slopes
+		std::vector<FT> slopes;
+		slopes.reserve(data.myNonVerticalLinesCount);
+		for (auto i = 0; i < data.myNonVerticalLinesCount; ++i)
+		{
+			const auto& dir = data.myLines[i].direction();
+			slopes.emplace_back(dir.dy() / dir.dx());
+		}
 
-			// Additional logic on chunk size in order to take the most appropriate decision here
+		// 2. Find ranges sequentially
+		std::vector<size_t> slabsRanges;
 
-			BindExecutionPolicy<E>(hpx::for_loop_strided, 0, queryPoints.size(), chunkSize,
-				[&](size_t aChunkStartIdx) {
-					const Point2 projectedPoint{ std::get<0>(queryPoints[aChunkStartIdx]).x(), std::get<0>(queryPoints[aChunkStartIdx]).y() };
-					const auto startSlabIdx = std::get<0>(locSlabBinarySearch<SlabSearchType::EXTERNAL>(projectedPoint.x(), data.mySlabs.size(),
-						[&](size_t i) { return std::get<0>(data.mySlabs[i]); }));
-					const auto chunkEnd = std::min<size_t>(aChunkStartIdx + chunkSize, queryPoints.size());
+		{
+			//std::cout << "START fill slabs ranges and cache" << std::endl;
+			using C = BatchPointResult::SlabCache;
+			std::vector <std::pair<size_t, C>> cacheEntries;
+			size_t i = 0;
+			slabsRanges.emplace_back(i);
+			do
+			{
+				cacheEntries.emplace_back(std::make_pair(std::get<1>(queryPoints[i]), C{}));
+				while (++i < queryPoints.size() && std::get<1>(queryPoints[i]) == std::get<1>(queryPoints[i - 1]));
+				slabsRanges.emplace_back(i);
 
-					for (auto i = startSlabIdx, k = aChunkStartIdx; i < data.mySlabs.size() - 1 && k < chunkEnd; ++i)
+			} while (i < queryPoints.size());
+			//slabsRanges.pop_back();
+			result.mySortedPlanesCache.insert(cacheEntries.begin(), cacheEntries.end());
+			//std::cout << "END fill slabs ranges and cache" << std::endl;
+		}
+
+		// 3. Compute results
+		{
+			tbb::enumerable_thread_specific<std::vector<Line2>> lines{ data.myLines.begin(), data.myLines.begin() + data.myNonVerticalLinesCount };
+			static tbb::affinity_partitioner ap;
+			tbb::parallel_for(tbb::blocked_range<int>(0, slabsRanges.size() - 1), [&](tbb::blocked_range<int>& r) {
+
+				for (auto i = r.begin(); i < r.end(); ++i)
+				{
+					// Common slab work
+					const auto pointStart = slabsRanges[i];
+					const auto pointEnd = slabsRanges[i + 1];
+					const auto& slabIdx = std::get<1>(queryPoints[pointStart]);
+					const auto slabStartVertex = data.myVertices[slabIdx];
+					const auto slabX = slabStartVertex.x();
+
+					// Count slab vertices
+					std::vector<Point2> uniqueY;
 					{
-						counter.fetch_add(1, std::memory_order_relaxed);
-						while (k < chunkEnd && std::get<0>(queryPoints[k]).x() < std::get<0>(data.mySlabs[i + 1]))
+						auto z = slabIdx;
+						while (z < data.myVertices.size() && data.myVertices[z].x() == slabX)
 						{
-							std::get<2>(queryPoints[k++]) = i;
+							uniqueY.emplace_back(data.myVertices[z]);
+							while (++z < data.myVertices.size() && data.myVertices[z].y() == uniqueY.back().y());
 						}
 					}
-				});
 
-			result.mySortedPlanesCache.resize(counter.load());
-		}
+					// Check for vertical line
+					const auto hasVerticalLine = std::find_if(data.myLines.begin() + data.myNonVerticalLinesCount, data.myLines.end(),
+						[&](const auto& aVerticalLine) { return aVerticalLine.point().x() == slabX; }) != data.myLines.end();
 
-		BindExecutionPolicy<E>(hpx::sort, queryPoints.begin(), queryPoints.end(),
-			[](const auto& a, const auto& b) { return std::get<2>(a) < std::get<2>(b); });
+					auto& cache = result.mySortedPlanesCache.at(slabIdx);
 
-		result.myRangeWrappers.resize(queryPoints.size());
+					// Compute sorted lines
+					std::vector<FT> yIntercept;
+					using L = std::tuple<Line2, size_t>;
+					std::vector<L> sortedLines;
+					sortedLines.reserve(lines.local().size());
 
-		const auto queryPointsProcessing = [&](size_t aPointIdx, size_t claimedIdx)
-		{
-			const size_t rangeStartIdx = aPointIdx;
-			while (++aPointIdx < queryPoints.size() && std::get<2>(queryPoints[aPointIdx]) == std::get<2>(queryPoints[rangeStartIdx]));
-			const size_t rangeEndIdx = aPointIdx;
-
-			const auto& slab = data.mySlabs[std::get<2>(queryPoints[rangeStartIdx])];
-
-			bool hasVerticalLine = locHasVerticalLine(std::get<0>(slab), data.myLines, data.myNonVerticalLinesCount);
-			const auto& sortedLines = locGetSortedLines<ExecutionPolicy::SEQ>(std::get<0>(slab), data.myLines, data.myNonVerticalLinesCount);
-
-			auto& cache = result.mySortedPlanesCache[claimedIdx];
-
-			const auto GetAreaIdx = [&](const size_t aPointIdx)
-			{
-				const Point2 projectedPoint{ std::get<0>(queryPoints[aPointIdx]).x(), std::get<0>(queryPoints[aPointIdx]).y() };
-				const auto verticesCount = std::get<1>(slab).size();
-				auto cacheIdx = -1;
-
-				if (projectedPoint.x() == std::get<0>(slab))
-				{
-					const auto test = locSlabBinarySearch<SlabSearchType::INTERNAL>(projectedPoint.y(), std::get<1>(slab).size(),
-						[&](size_t i) { return std::get<1>(slab)[i]; });
-
-					if (std::get<1>(test))
+					yIntercept.reserve(data.myNonVerticalLinesCount);
+					sortedLines.reserve(data.myNonVerticalLinesCount);
+					for (size_t k = 0; k < data.myNonVerticalLinesCount; ++k)
 					{
-						// Vertex
-						cacheIdx = std::get<0>(test);
+						yIntercept.emplace_back(lines.local()[k].y_at_x(slabX));
+						sortedLines.emplace_back(L{ lines.local()[k], k });
 					}
-					else if (hasVerticalLine)
+
+					std::sort(sortedLines.begin(), sortedLines.end(), [&](const auto& a, const auto& b) {
+						const auto m = std::get<1>(a);
+						const auto k = std::get<1>(b);
+						return yIntercept[m] < yIntercept[k] || (yIntercept[m] == yIntercept[k] && slopes[m] < slopes[k]);
+						});
+
+					// Fill required cache entries
+					using A = std::tuple<size_t, size_t>;
+					std::vector<A> areaIndices;
+					areaIndices.reserve(pointEnd - pointStart);
+
 					{
-						// Vertical segment
-						cacheIdx = cache.size() - (verticesCount + 1) + std::get<0>(test);
+						// Define area index getter
+						const auto GetAreaIdx = [&](const size_t aPointIdx)
+						{
+							const Point2 projectedPoint{ std::get<0>(queryPoints[aPointIdx]).x(), std::get<0>(queryPoints[aPointIdx]).y() };
+							auto cacheIdx = -1;
+							const auto verticesCount = uniqueY.size();
+
+							if (projectedPoint.x() == slabX)
+							{
+								const auto test = locTestBinarySearch(projectedPoint, uniqueY);
+
+								if (std::get<1>(test))
+								{
+									// Vertex
+									cacheIdx = std::get<0>(test);
+								}
+								else if (hasVerticalLine)
+								{
+									// Vertical segment
+									cacheIdx = cache.size() - (verticesCount + 1) + std::get<0>(test);
+								}
+							}
+							else
+							{
+								const auto lineIdx = locGeometricBinarySearch(projectedPoint, sortedLines.size(), [&](size_t i) { return std::get<0>(sortedLines[i]); });
+								if (lineIdx < sortedLines.size() && std::get<0>(sortedLines[lineIdx]).has_on(projectedPoint))
+								{
+									// Line
+									cacheIdx = verticesCount + lineIdx;
+								}
+								else
+								{
+									// Area
+									cacheIdx = verticesCount + sortedLines.size() + lineIdx;
+								}
+							}
+
+							CGAL_postcondition(cacheIdx > -1);
+							return cacheIdx;
+						};
+
+						for (auto k = pointStart; k < pointEnd; ++k)
+						{
+							areaIndices.emplace_back(std::make_pair(GetAreaIdx(k), k));
+						}
+
+						std::vector<A> uniqueAreaIndices(areaIndices);
+						std::sort(uniqueAreaIndices.begin(), uniqueAreaIndices.end());
+
+						const auto newEnd = std::unique(uniqueAreaIndices.begin(), uniqueAreaIndices.end(),
+							[](const auto& a, const auto& b) { return std::get<0>(a) == std::get<0>(b); });
+						uniqueAreaIndices.erase(newEnd, uniqueAreaIndices.end());
+
+						for (const auto& a : uniqueAreaIndices)
+						{
+							CGAL_precondition(cache.find(std::get<0>(a)) == cache.end());
+							auto& sortedPlanesIndices = cache.insert(std::make_pair(std::get<0>(a), std::vector<size_t>{})).first->second;
+							const auto& queryPoint = std::get<0>(queryPoints[std::get<1>(a)]);
+							locGetSortedItemsByLine3(somePlanes, Line3{ queryPoint, Vec3{0,0,1} }, sortedPlanesIndices);
+						}
 					}
+
+					// Fill result
+					for (auto k = pointStart; k < pointEnd; ++k)
+					{
+						const auto& queryPoint = queryPoints[k];
+						const auto& slabIdx = (size_t)std::get<1>(queryPoint);
+						const auto cacheIdx = std::get<0>(areaIndices[k - pointStart]);
+						const auto& sortedPlanesIndices = cache.at(cacheIdx);
+						const auto firstUpperPlaneIdx = locGeometricBinarySearch(std::get<0>(queryPoint), sortedPlanesIndices.size(),
+							[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
+						using Res = BatchPointResult::RangeWrapper;
+						result.myRangeWrappers[std::get<2>(queryPoint)] =
+							Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, slabIdx, cacheIdx };
+					}
+
 				}
-				else
-				{
-					const auto lineIdx = locGeometricBinarySearch(projectedPoint, sortedLines.size(), [&](size_t i) { return sortedLines[i]; });
-					if (lineIdx < sortedLines.size() && sortedLines[lineIdx].has_on(projectedPoint))
-					{
-						// Line
-						cacheIdx = verticesCount + lineIdx;
-					}
-					else
-					{
-						// Area
-						cacheIdx = verticesCount + sortedLines.size() + lineIdx;
-					}
-				}
-
-				CGAL_postcondition(cacheIdx > -1);
-				return cacheIdx;
-			};
-
-			std::vector<size_t> areaIndices;
-			locFillRequiredCacheEntries<ExecutionPolicy::SEQ>(somePlanes, queryPoints, rangeStartIdx, rangeEndIdx, GetAreaIdx, areaIndices, cache);
-
-			hpx::for_loop(hpx::execution::seq, rangeStartIdx, rangeEndIdx, [&](size_t aPointIdx) {
-				const auto cacheIdx = areaIndices[aPointIdx - rangeStartIdx];
-				const auto& sortedPlanesIndices = cache.at(cacheIdx);
-				const auto firstUpperPlaneIdx = locGeometricBinarySearch(std::get<0>(queryPoints[aPointIdx]), sortedPlanesIndices.size(),
-					[&](size_t i) { return somePlanes[sortedPlanesIndices[i]]; });
-				using Res = BatchPointResult::RangeWrapper;
-				result.myRangeWrappers[std::get<1>(queryPoints[aPointIdx])] =
-					Res{ Range{firstUpperPlaneIdx, somePlanes.size()}, claimedIdx, cacheIdx };
 				});
-			return rangeEndIdx;
-		};
-
-		if constexpr (E == ExecutionPolicy::SEQ)
-		{
-			size_t i = 0;
-			while (i < queryPoints.size())
-			{
-				const auto claimedIdx = result.mySortedPlanesCache.size();
-				result.mySortedPlanesCache.emplace_back(std::unordered_map<size_t, std::vector<size_t>>{});
-				i = queryPointsProcessing(i, claimedIdx);
-			}
 		}
-		else
-		{
-			std::atomic<size_t> counter{ 0 };
 
-			BindExecutionPolicy<E>(hpx::for_loop, 0, queryPoints.size(),
-				[&](size_t aPointIdx) {
-					if (aPointIdx == 0 ||
-						std::get<2>(queryPoints[aPointIdx]) != std::get<2>(queryPoints[aPointIdx - 1]))
-					{
-						queryPointsProcessing(aPointIdx, counter.fetch_add(1, std::memory_order_relaxed));
-					}
-				});
-
-			result.mySortedPlanesCache.resize(counter.load());
-		}
+		//std::cout << "Done" << std::endl;
 
 		return result;
 	}
-
-	// ------------------------------------------------
-	// Explicit instantiation for each execution policy
-	template BatchPointResult BatchPointLocation<ExecutionPolicy::SEQ>(const std::vector<Plane>&, const std::vector<Point3>&);
-	template BatchPointResult BatchPointLocation<ExecutionPolicy::PAR>(const std::vector<Plane>&, const std::vector<Point3>&);
-	template BatchPointResult BatchPointLocation<ExecutionPolicy::PAR_UNSEQ>(const std::vector<Plane>&, const std::vector<Point3>&);
 }

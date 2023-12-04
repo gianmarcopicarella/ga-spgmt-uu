@@ -1,7 +1,9 @@
 set(CGAL_DATA_DIR ${PROJECT_SOURCE_DIR}/data)
 
 find_package(CGAL REQUIRED) # COMPONENTS Qt5)
-find_package(HPX REQUIRED)
+#find_package(HPX REQUIRED)
+find_package(TBB REQUIRED COMPONENTS tbbmalloc tbbmalloc_proxy)
+include(CGAL_TBB_support)
 
 # find_package(Corrade REQUIRED Main)
 # find_package(Magnum REQUIRED GL
@@ -69,8 +71,8 @@ endif()
 # Magnum::Trade)
 
 # should add  CGAL::CGAL_Basic_viewer in order to use Qt5
-target_link_libraries(main PRIVATE CGAL::CGAL CGAL::Data sfml-graphics HPX::hpx)
-target_link_libraries(tests PRIVATE Catch2::Catch2 CGAL::CGAL CGAL::Data sfml-graphics HPX::hpx)
+target_link_libraries(main PRIVATE CGAL::CGAL CGAL::TBB_support CGAL::Data sfml-graphics) #HPX::hpx HPX::wrap_main)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain CGAL::CGAL CGAL::TBB_support CGAL::Data sfml-graphics) #HPX::hpx HPX::wrap_main)
 
 # if(IPE_FOUND)
 # foreach(IPELET_PATH ${IPELETS_ALL})

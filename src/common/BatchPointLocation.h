@@ -9,7 +9,7 @@ namespace SPGMT
 	struct BatchPointResult
 	{
         using SlabCache = std::unordered_map<size_t, std::vector<size_t>>;
-        std::vector<SlabCache> mySortedPlanesCache;
+        std::unordered_map<size_t, SlabCache> mySortedPlanesCache;
 
         struct RangeWrapper
         {
@@ -21,6 +21,5 @@ namespace SPGMT
         std::vector<RangeWrapper> myRangeWrappers;
 	};
 
-    template<ExecutionPolicy E>
     BatchPointResult BatchPointLocation(const std::vector<Plane>& somePlanes, const std::vector<Point3>& somePoints);
 }

@@ -4,15 +4,8 @@
 
 namespace SPGMT
 {
-	template<ExecutionPolicy E>
 	LowerEnvelope3d ComputeLowerEnvelope(const std::vector<Plane>& somePlanes);
-
-	template<ExecutionPolicy E>
 	void TriangulateLowerEnvelope(LowerEnvelope3d& anOutLowerEnvelope);
-
-	template<ExecutionPolicy E>
 	size_t CountVerticesInLowerEnvelope(const LowerEnvelope3d& aLowerEnvelope);
-
-	template<ExecutionPolicy E>
 	std::vector<size_t> GetLowerEnvelopePlanesIndices(const LowerEnvelope3d& aLowerEnvelope);
 }

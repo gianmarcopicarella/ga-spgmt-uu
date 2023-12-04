@@ -14,7 +14,7 @@ namespace SPGMT
 	const unsigned long int SEED2 = 22392398232;*/
 	CGAL::Random& GetDefaultRandom()
 	{
-		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/2968548432 };
+		static CGAL::Random rand{ /*2239223232*//*23233223*//*3222535971*//*1306513302*//*4169948633*/0 };
 		return rand;
 	}
 
@@ -229,6 +229,7 @@ namespace SPGMT
 						std::sort(vertices.begin(), vertices.end());
 						uniqueVerticesCount = std::unique(vertices.begin(), vertices.end()) - vertices.begin();
 					}
+
 					CGAL_precondition(uniqueVerticesCount == expectedLE.number_of_vertices());
 
 					for (VertexIter it = expectedLE.vertices_begin();
@@ -291,7 +292,7 @@ namespace SPGMT
 				return samples;
 			}
 
-			CGAL::Random random{ GetDefaultRandom() };
+			CGAL::Random random{ /*GetDefaultRandom()*/0 };
 			while (samples.size() < aSampleCount)
 			{
 				samples.push_back(intersectionPoints[random.get_int(0, intersectionPoints.size())]);
@@ -309,7 +310,7 @@ namespace SPGMT
 				return samples;
 			}
 
-			CGAL::Random random{ GetDefaultRandom() };
+			CGAL::Random random{ /*GetDefaultRandom()*/0 };
 			while (samples.size() < aSampleCount)
 			{
 				const auto& line = intersectionLines[random.get_int(0, intersectionLines.size())];
@@ -424,6 +425,52 @@ namespace SPGMT
 			//CGAL::cpp98::random_shuffle(parallelPlanes.begin(), parallelPlanes.end(), GetDefaultRandom());
 			return parallelPlanes;
 		}
+
+		// mem test
+		//CGAL::Concurrent_compact_container<Plane, CGAL_ALLOCATOR(Plane)> RandomPlaneSamplingOPT(const int aSampleCount, const double aMinPlaneHeight, const double aMaxPlaneHeight)
+		//{
+		//	const Vec3 positiveVerticalAxis{ 0,0,1 };
+		//	constexpr auto radius = 1.f;
+
+		//	// Just to be sure there is room for a bit of plane height variety
+		//	// TODO: I will need to guarantee a minimum distance between parallel planes (if i use an inaccurate numeric representation)
+		//	CGAL_precondition((aMaxPlaneHeight - aMinPlaneHeight) >= aSampleCount);
+
+		//	CGAL::Random_points_on_sphere_3<Vec3> generator{ radius, GetDefaultRandom() };
+		//	CGAL::Random random{ GetDefaultRandom() };
+		//	CGAL::Concurrent_compact_container<Plane, CGAL_ALLOCATOR(Plane)> samples;
+
+		//	while (samples.size() < aSampleCount)
+		//	{
+		//		for (int i = 0; i < aSampleCount && samples.size() < aSampleCount; ++i, ++generator)
+		//		{
+		//			auto planeNormal = *generator;
+		//			const auto dot = CGAL::scalar_product(positiveVerticalAxis, planeNormal);
+
+		//			// Allow vertical planes
+		//			/*if (dot != 0.f)
+		//			{*/
+		//			if (dot < 0.f)
+		//			{
+		//				planeNormal = Vec3{ planeNormal.x(),planeNormal.y(), CGAL::abs(planeNormal.z()) };
+		//			}
+
+		//			const auto sampleAlongNormal = planeNormal * random.get_double(aMinPlaneHeight, aMaxPlaneHeight);
+		//			const Point3 planePoint{ sampleAlongNormal.x(), sampleAlongNormal.y(), sampleAlongNormal.z() };
+		//			const Plane plane{ planePoint, planeNormal };
+
+		//			const auto isOrientationUnique = std::find(samples.begin(), samples.end(), plane) == samples.end();
+
+		//			if (isOrientationUnique)
+		//			{
+		//				samples.insert(plane);
+		//			}
+		//			//}
+		//		}
+		//	}
+
+		//	return samples;
+		//}
 
 
 		std::vector<Plane> RandomPlaneSampling(const int aSampleCount, const double aMinPlaneHeight, const double aMaxPlaneHeight)

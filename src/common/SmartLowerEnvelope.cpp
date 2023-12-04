@@ -6,10 +6,11 @@
 #include "DebugUtils.h"
 
 #include <CGAL/Random.h>
-#include <hpx/hpx.hpp>
+
 
 namespace SPGMT
 {
+	/*
 	namespace
 	{
 		std::vector<size_t> locSampleIndices(const std::vector<size_t>& someItemsIndices, const double aProbability)
@@ -58,8 +59,7 @@ namespace SPGMT
 						const Point3* secondProjectedPoint = boost::get<Point3>(&*secondIntersection);
 						CGAL_precondition(secondProjectedPoint != nullptr);
 
-						/*std::cout << secondProjectedPoint->z() << ",  " << firstProjectedPoint->z() << " | " << edges[i].myEnd.z() << std::endl;
-*/
+
 						if (secondProjectedPoint->z() < firstProjectedPoint->z() &&
 							secondProjectedPoint->z() >= edges[i].myEnd.z())
 						{
@@ -435,9 +435,8 @@ namespace SPGMT
 			const auto& edges = std::get<std::vector<Edge<Point3>>>(aLowerEnvelope);
 			CGAL_precondition(edges.size() > 0);
 
-			//			Debug::PrintLowerEnvelope(aLowerEnvelope);
-
-						// Collect and sort unique vertices
+			//Debug::PrintLowerEnvelope(aLowerEnvelope);
+			// Collect and sort unique vertices
 			size_t i = 0;
 			while (i < edges.size())
 			{
@@ -625,17 +624,13 @@ namespace SPGMT
 			{
 				const auto& conflictList = locGetSortedPrismConflictList(data.myUniqueTriangles[i], planesBelowVertex);
 
-				/*std::vector<size_t> conflictListSubset;
-				std::set_intersection(conflictList.begin(), conflictList.end(),
-					somePlanesIndices.begin(), somePlanesIndices.end(), std::back_inserter(conflictListSubset));*/
-
 				const auto& recLowerEnvelope = locRecursiveLowerEnvelope(somePlanes, somePlanesIndices, conflictList, aFirstEnvelopeWasComputed);
 				lowerEnvelopes.emplace_back(recLowerEnvelope);
 			}
 
 			return locMergeLowerEnvelopes(somePlanes, lowerEnvelopes, data);
 		}
-	}
+	}*/
 
 	LowerEnvelope3d ComputeLowerEnvelopeSmart(const std::vector<Plane>& somePlanes)
 	{
@@ -644,21 +639,23 @@ namespace SPGMT
 		constexpr auto threshold = 20;
 		constexpr auto exponent = 7.f / 8.f;
 
-		if (somePlanes.size() <= threshold)
-		{
-			return ComputeLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes);
-		}
+		return LowerEnvelope3d{};
 
-		// Create the set of all plane indices 
-		std::vector<size_t> allIndices(somePlanes.size());
-		std::iota(allIndices.begin(), allIndices.end(), 0);
+		//if (somePlanes.size() <= threshold)
+		//{
+		//	return ComputeLowerEnvelope<ExecutionPolicy::SEQ>(somePlanes);
+		//}
 
-		// Compute sampling probability
-		const auto coefficient = std::pow(somePlanes.size(), exponent);
-		const auto probability = coefficient / somePlanes.size();
+		//// Create the set of all plane indices 
+		//std::vector<size_t> allIndices(somePlanes.size());
+		//std::iota(allIndices.begin(), allIndices.end(), 0);
 
-		const auto& sampledPlaneIndices = locSampleIndices(allIndices, probability);
+		//// Compute sampling probability
+		//const auto coefficient = std::pow(somePlanes.size(), exponent);
+		//const auto probability = coefficient / somePlanes.size();
 
-		return locRecursiveLowerEnvelope(somePlanes, allIndices, sampledPlaneIndices, false);
+		//const auto& sampledPlaneIndices = locSampleIndices(allIndices, probability);
+
+		//return locRecursiveLowerEnvelope(somePlanes, allIndices, sampledPlaneIndices, false);
 	}
 }

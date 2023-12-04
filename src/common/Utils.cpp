@@ -13,7 +13,7 @@ namespace SPGMT
 
 			bool locIsValidPlaneForDuality(const Plane& aPlane)
 			{
-				return aPlane.a() != 0 || aPlane.b() != 0 || aPlane.c() != 0;
+				return (aPlane.a() != 0 || aPlane.b() != 0) && aPlane.c() == FT(-1);
 			}
 		}
 
@@ -54,7 +54,6 @@ namespace SPGMT
 		Point3 SingleDualMapping(const Plane& aPlane)
 		{
 			CGAL_precondition(locIsValidPlaneForDuality(aPlane));
-			CGAL_precondition(aPlane.c() == FT(-1));
 			const auto& x = aPlane.a();
 			const auto& y = aPlane.b();
 			const auto& z = -aPlane.d();
@@ -78,7 +77,7 @@ namespace SPGMT
 			
 			for (auto i = 0; i < somePlanes.size(); ++i)
 			{
-				result.push_back(SingleDualMapping(somePlanes[i]));
+				result.emplace_back(SingleDualMapping(somePlanes[i]));
 			}
 
 			return result;
@@ -93,7 +92,7 @@ namespace SPGMT
 			const Vec3 up{ 0,0,1 };
 			for (auto i = 0; i < somePoints.size(); ++i)
 			{
-				result.push_back(SingleDualMapping(somePoints[i]));
+				result.emplace_back(SingleDualMapping(somePoints[i]));
 			}
 			return result;
 		}
